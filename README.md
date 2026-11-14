@@ -5,12 +5,12 @@
 ## 订阅链接（复制即用）
 
 ```
-https://raw.githubusercontent.com/Komeiji6/CMFA-config-/main/cmfa-merged-config.yaml
+https://raw.githubusercontent.com/Komeiji6/Clash-config/main/cmfa-merged-config.yaml
 ```
 
 > **备用镜像**（raw 链接访问不了时使用，更新延迟约 12 小时）：
 > ```
-> https://cdn.jsdelivr.net/gh/Komeiji6/CMFA-config-@main/cmfa-merged-config.yaml
+> https://cdn.jsdelivr.net/gh/Komeiji6/Clash-config@main/cmfa-merged-config.yaml
 > ```
 
 ## 使用方式
