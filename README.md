@@ -2,10 +2,23 @@
 
 适用于 **Clash Meta for Android (CMFA)** 的合并配置：免费节点 + 分流规则，内容每日自动更新。
 
+## 订阅链接（复制即用）
+
+```
+https://raw.githubusercontent.com/Komeiji6/CMFA-config-/main/cmfa-merged-config.yaml
+```
+
+> **备用镜像**（raw 链接访问不了时使用，更新延迟约 12 小时）：
+> ```
+> https://cdn.jsdelivr.net/gh/Komeiji6/CMFA-config-@main/cmfa-merged-config.yaml
+> ```
+
 ## 使用方式
 
-1. 将 `cmfa-merged-config.yaml` 的 raw 链接导入 CMFA（配置 → + → 从 URL 导入）
-2. 节点与规则均为动态拉取（`proxy-providers` / `rule-providers`），**每天自动更新**，无需手动维护
+1. 打开 **CMFA**（Clash Meta for Android）→ **配置** → 右下角 **+** → **从 URL 导入**
+2. 粘贴上面的订阅链接，保存并**点选启用**该配置
+3. 回到首页打开代理开关；在「代理」页 `PROXY` 组中选节点（或选 `AUTO` 自动测速）
+4. 节点与规则均为动态拉取（`proxy-providers` / `rule-providers`），**每天自动更新**，无需手动维护
 
 ## 数据来源（Attribution）
 
@@ -39,4 +52,8 @@
 
 ## License
 
-配置文件部分以 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) 发布；引用的第三方内容受其各自许可协议约束（见上文「数据来源」）。本许可不授予第三方内容的额外使用权。
+Copyright (c) 2026 Komeiji6.
+
+本仓库的配置文件及文档以 [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/)（署名-非商业性使用 4.0 国际）发布，详见 [LICENSE.md](LICENSE.md)。
+
+引用的第三方内容受其各自许可协议约束（见上文「数据来源」），其版权与许可不因本仓库的许可而改变。本许可不授予第三方内容的额外使用权。
