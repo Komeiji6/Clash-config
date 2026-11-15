@@ -1,21 +1,13 @@
 # ============================================================
-#  CMFA (Clash Meta for Android) 合并配置
+#  全平台 Mihomo (Clash.Meta) 合并配置
 #
-#  免费节点来源 : VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy  (每 8 小时刷新)
+#  免费节点来源 : 本仓库 nodes 分支 proxies.yaml（每 8 小时经 GitHub Actions
+#                从 ClashX-V2Ray-TopFreeProxy 筛选 ≤500ms 存活节点）
 #                许可：仅限非商业用途，引用时保留其来源与非商业限制
-#  分流规则来源 : Loyalsoldier/clash-rules (GPL-3.0)                (每天 06:30 构建)
+#  分流规则来源 : Loyalsoldier/clash-rules (GPL-3.0)（每天 06:30 构建）
 #
-#  本配置仅通过动态链接引用上述项目的资源，不包含其原始数据副本。
-#  版权归各原项目及各自权利人所有。本配置部分以 CC BY-NC 4.0 发布。
-#  仅供个人学习与非商业使用；使用风险自负，请遵守当地法律法规。
-#  详细署名与免责声明见本仓库 README.md。
-#
-#  工作方式：本配置通过 proxy-providers / rule-providers 动态拉取，
-#           节点与规则每天自动更新，配置文件本身无需改动。
-#           因此把它放到任意固定链接 / 本地文件，都是“每天更新”的。
-#
-#  兼容核心：mihomo (Clash Meta) —— ClashMetaForAndroid (CMFA)、
-#           clash-verge-rev、clash-party、clashmi、OpenClash 等。
+#  兼容核心：mihomo (Clash Meta) —— Clash Verge Rev、Clash Party、
+#           FlClash、CMFA、Clash Nyanpasu、OpenClash 等全平台客户端。
 # ============================================================
 
 # ---------- 基础 ----------
@@ -35,6 +27,19 @@ profile:
   store-selected: true           # 记住手动选择的节点
   store-fake-ip: true
 
+# ---------- 域名嗅探 ----------
+sniffer:
+  enable: true
+  parse-pure-ip: true
+  sniff:
+    HTTP:
+      ports: [80, 8080-8880]
+      override-destination: true
+    TLS:
+      ports: [443, 8443]
+    QUIC:
+      ports: [443, 8443]
+
 # ---------- DNS ----------
 dns:
   enable: true
@@ -48,7 +53,13 @@ dns:
     - "+.msftconnecttest.com"
     - "+.msftncsi.com"
     - "+.market.xiaomi.com"
+    - "+.ntp.org"
+    - "time.*.com"
+    - "ntp.*.com"
   default-nameserver:            # 必须为 IP，用于解析下面的 DoH 域名
+    - 223.5.5.5
+    - 119.29.29.29
+  proxy-server-nameserver:       # 用于解析节点本身的域名，防止死锁或卡顿
     - 223.5.5.5
     - 119.29.29.29
   nameserver:                    # 国内 DoH，解析国内域名
@@ -63,27 +74,26 @@ dns:
       - 240.0.0.0/4
 
 # ============================================================
-#  节点提供者（免费节点，每日自动更新）
-#  备用镜像：若 raw.githubusercontent.com 被墙，可把 url 换成
-#  https://cdn.jsdelivr.net/gh/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy@main/combine/clash.config.yaml
-#  （jsdelivr 有约 12 小时延迟）
+#  节点提供者（指向本仓库 nodes 分支预筛后的存活节点）
 # ============================================================
 proxy-providers:
   topfree:
     type: http
-    url: "https://raw.githubusercontent.com/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy/main/combine/clash.config.yaml"
-    interval: 21600               # 每 6 小时拉取一次节点
+    url: "https://raw.githubusercontent.com/Komeiji6/Clash-config/nodes/proxies.yaml"
+    interval: 14400               # 每 4 小时拉取一次最新节点
     path: ./providers/topfree.yaml
+    proxy: PROXY                  # 走代理拉取 GitHub Raw，无 CDN 缓存延迟
+    exclude-type: "http|socks5"   # 排除极不稳定的公开扫描 HTTP/SOCKS 代理
     health-check:
       enable: true
       url: "https://www.gstatic.com/generate_204"
-      interval: 1800              # 每 30 分钟测活一次
+      interval: 1200              # 每 20 分钟测活一次
+      timeout: 3000
       lazy: true                  # 仅在用到时测活，省流量
+      expected-status: 204        # 剔除只通 TCP 但返回报错/劫持页的节点
 
 # ============================================================
 #  分流规则提供者（Loyalsoldier，每日自动更新）
-#  备用镜像：把 url 里的 cdn.jsdelivr.net 换成
-#  raw.githubusercontent.com/Loyalsoldier/clash-rules/release/xxx.txt
 # ============================================================
 rule-providers:
   applications:
@@ -157,41 +167,55 @@ rule-providers:
 #  策略组
 # ============================================================
 proxy-groups:
-  # 主选择组：手动挑节点
+  # 主选择组：默认自动测速，也可手动切换 APAC-AUTO 或任意单节点
   - name: PROXY
     type: select
     use: [topfree]
-    proxies: [AUTO, DIRECT]
+    proxies: [AUTO, APAC-AUTO, DIRECT]
 
-  # 自动选最快的节点
+  # 全部存活节点自动测速（在中国本地网络下挑出真正最快的节点）
   - name: AUTO
     type: url-test
     use: [topfree]
     url: "https://www.gstatic.com/generate_204"
     interval: 300
+    timeout: 2500
     tolerance: 50
     lazy: true
+    max-failed-times: 2
+    expected-status: 204
+
+  # 亚太低延迟自动组（仅保留名称含港/台/日/新/韩的节点，适合追求极低延迟时手动选中）
+  - name: APAC-AUTO
+    type: url-test
+    use: [topfree]
+    filter: "(?i)港|hk|hong|台|tw|taiwan|日|jp|japan|新|sg|singapore|韩|kr"
+    url: "https://www.gstatic.com/generate_204"
+    interval: 180
+    timeout: 2500
+    tolerance: 50
+    lazy: true
+    max-failed-times: 2
+    expected-status: 204
 
   - name: APPLE
     type: select
-    proxies: [DIRECT, PROXY, AUTO]
+    proxies: [DIRECT, PROXY, AUTO, APAC-AUTO]
 
   - name: GOOGLE
     type: select
-    proxies: [PROXY, AUTO, DIRECT]
+    proxies: [PROXY, AUTO, APAC-AUTO, DIRECT]
 
   - name: TELEGRAM
     type: select
-    proxies: [PROXY, AUTO]
+    proxies: [PROXY, AUTO, APAC-AUTO]
 
   - name: FINAL
     type: select
-    proxies: [PROXY, AUTO, DIRECT]
+    proxies: [PROXY, AUTO, APAC-AUTO, DIRECT]
 
 # ============================================================
 #  分流规则（白名单模式：未命中规则的流量走代理）
-#  想改成黑名单模式（默认直连），把最后 MATCH,FINAL 改成 MATCH,DIRECT，
-#  并按需删减上方规则即可。
 # ============================================================
 rules:
   - RULE-SET,applications,DIRECT
