@@ -56,12 +56,12 @@ jobs:
           /tmp/venv/bin/pip install -q pyyaml
           echo "ok=true" >> "$GITHUB_OUTPUT"
 
-      - name: Split and Parallel Test Nodes (<=500ms)
+      - name: Split and Parallel Test Nodes (<=500ms, Top 300)
         if: steps.fetch.outputs.ok == 'true'
         id: test
         run: |
           cat << 'EOF' > work/split.py
-          import os, math, yaml
+          import json, math, os, re, yaml
 
           with open("work/upstream1.yaml", "r", encoding="utf-8", errors="ignore") as f:
               data = yaml.safe_load(f) or {}
@@ -69,16 +69,38 @@ jobs:
           proxies = data.get("proxies") or []
           seen = set()
           clean = []
+          name_counts = {}
+          id_to_name = {}
+
           for p in proxies:
               if not isinstance(p, dict):
+                  continue
+              ptype = str(p.get("type", "")).lower()
+              # 与 cmfa-merged-config.yaml 保持一致，提前剔除 http/socks5 避免占满前 300 名额
+              if ptype in ("http", "socks5"):
                   continue
               srv, port = p.get("server"), p.get("port")
               if not srv or not port:
                   continue
-              key = (str(srv), str(port), str(p.get("type", "")), str(p.get("uuid", p.get("password", ""))))
-              if key not in seen:
-                  seen.add(key)
-                  clean.append(p)
+              key = (str(srv), str(port), ptype, str(p.get("uuid", p.get("password", ""))))
+              if key in seen:
+                  continue
+              seen.add(key)
+
+              base_name = re.sub(r"[\t\r\n]+", " ", str(p.get("name") or "Node")).strip() or "Node"
+              cnt = name_counts.get(base_name, 0) + 1
+              name_counts[base_name] = cnt
+              final_name = base_name if cnt == 1 else f"{base_name} #{cnt}"
+
+              node_id = f"N{len(clean):05d}"
+              id_to_name[node_id] = final_name
+
+              p_copy = dict(p)
+              p_copy["name"] = node_id
+              clean.append(p_copy)
+
+          with open("work/id_to_name.json", "w", encoding="utf-8") as nf:
+              json.dump(id_to_name, nf, ensure_ascii=False)
 
           with open("work/stats_raw.txt", "w") as sf:
               sf.write(f"{len(proxies)} {len(clean)}\n")
@@ -117,28 +139,78 @@ jobs:
           fi
 
           cat << 'EOF' > work/merge.py
-          import glob, yaml
+          import glob, json, os, re, yaml
 
-          merged = []
-          name_counts = {}
+          MAX_NODES = 300
+          ANSI_RE = re.compile(r"\x1b\[[0-9;]*[a-zA-Z]")
+          DUR_RE = re.compile(r"^(\d+(?:\.\d+)?)(ms|s)$")
+          ID_RE = re.compile(r"\b(N\d{4,})\b")
+
+          id_to_name = {}
+          if os.path.exists("work/id_to_name.json"):
+              with open("work/id_to_name.json", "r", encoding="utf-8") as nf:
+                  id_to_name = json.load(nf)
+
+          lat_map = {}
+          for log_path in sorted(glob.glob("work/out/part_*.yaml.log")):
+              with open(log_path, "r", encoding="utf-8", errors="ignore") as lf:
+                  for raw_line in lf:
+                      line = ANSI_RE.sub("", raw_line).strip()
+                      if not line:
+                          continue
+                      m_id = ID_RE.search(line)
+                      if not m_id:
+                          continue
+                      nid = m_id.group(1)
+                      parts = [c.strip() for c in line.split("\t") if c.strip()]
+                      lat_ms = None
+                      if nid in parts:
+                          idx = parts.index(nid)
+                          for cell in parts[idx + 1:]:
+                              m_dur = DUR_RE.match(cell)
+                              if m_dur:
+                                  val = float(m_dur.group(1))
+                                  lat_ms = val * 1000.0 if m_dur.group(2) == "s" else val
+                                  break
+                      if lat_ms is None:
+                          m_fb = re.search(rf"\b{nid}\b\s+\S+\s+(\d+(?:\.\d+)?)(ms|s)\b", line)
+                          if m_fb:
+                              val = float(m_fb.group(1))
+                              lat_ms = val * 1000.0 if m_fb.group(2) == "s" else val
+                      if lat_ms is not None:
+                          lat_map[nid] = lat_ms
+
+          candidates = []
+          parsed_hits = 0
           for path in sorted(glob.glob("work/out/part_*.yaml")):
               with open(path, "r", encoding="utf-8", errors="ignore") as f:
                   data = yaml.safe_load(f) or {}
               for p in (data.get("proxies") or []):
                   if not isinstance(p, dict) or not p.get("server"):
                       continue
-                  base_name = str(p.get("name") or "Node").strip()
-                  cnt = name_counts.get(base_name, 0) + 1
-                  name_counts[base_name] = cnt
-                  if cnt > 1:
-                      p["name"] = f"{base_name} #{cnt}"
-                  merged.append(p)
+                  nid = str(p.get("name") or "")
+                  if nid in id_to_name:
+                      p["name"] = id_to_name[nid]
+                  lat = lat_map.get(nid)
+                  if lat is not None:
+                      parsed_hits += 1
+                      candidates.append((lat, p))
+                  else:
+                      candidates.append((999999.0, p))
+
+          candidates.sort(key=lambda x: x[0])
+          top_items = candidates[:MAX_NODES]
+          top_proxies = [p for _, p in top_items]
+
+          valid_lats = [lat for lat, _ in top_items if lat < 999999.0]
+          lat_min = f"{min(valid_lats):.0f}ms" if valid_lats else "-"
+          lat_max = f"{max(valid_lats):.0f}ms" if valid_lats else "-"
 
           with open("work/proxies.yaml", "w", encoding="utf-8") as out:
-              yaml.safe_dump({"proxies": merged}, out, allow_unicode=True, sort_keys=False)
+              yaml.safe_dump({"proxies": top_proxies}, out, allow_unicode=True, sort_keys=False)
 
           with open("work/stats_live.txt", "w") as sf:
-              sf.write(f"{len(merged)}\n")
+              sf.write(f"{len(candidates)} {len(top_proxies)} {parsed_hits} {lat_min} {lat_max}\n")
           EOF
 
           /tmp/venv/bin/python work/merge.py
@@ -146,19 +218,19 @@ jobs:
       - name: Validate & Publish to 'nodes' Branch
         if: steps.fetch.outputs.ok == 'true'
         run: |
-          RAW_COUNT=$(awk '{print $1}' work/stats_raw.txt)
-          DEDUP_COUNT=$(awk '{print $2}' work/stats_raw.txt)
-          LIVE_COUNT=$(cat work/stats_live.txt)
+          read RAW_COUNT DEDUP_COUNT < work/stats_raw.txt
+          read LIVE_ALL KEPT_COUNT PARSED_COUNT LAT_MIN LAT_MAX < work/stats_live.txt
 
-          echo "### 节点筛选报表（<=500ms）" >> "$GITHUB_STEP_SUMMARY"
+          echo "### 节点筛选报表（<=500ms 后保留延迟最低前 300 个）" >> "$GITHUB_STEP_SUMMARY"
           echo "| 阶段 | 数量 |" >> "$GITHUB_STEP_SUMMARY"
           echo "| :--- | :--- |" >> "$GITHUB_STEP_SUMMARY"
           echo "| 原始节点数 | ${RAW_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| 去重后待测数 | ${DEDUP_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
-          echo "| **<=500ms 存活数** | **${LIVE_COUNT}** |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 去重后待测数（已跳过 http/socks5） | ${DEDUP_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| <=500ms 存活总数 | ${LIVE_ALL}（解析延迟 ${PARSED_COUNT} 条） |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **最终保留（Top 300）** | **${KEPT_COUNT}（云端延迟 ${LAT_MIN} ~ ${LAT_MAX}）** |" >> "$GITHUB_STEP_SUMMARY"
 
-          if [ "$LIVE_COUNT" -lt 3 ]; then
-            echo "状态：可用节点不足 3 个（当前 ${LIVE_COUNT} 个），已跳过本次覆盖以保护旧节点。" >> "$GITHUB_STEP_SUMMARY"
+          if [ "$KEPT_COUNT" -lt 3 ]; then
+            echo "状态：可用节点不足 3 个（当前 ${KEPT_COUNT} 个），已跳过本次覆盖以保护旧节点。" >> "$GITHUB_STEP_SUMMARY"
             head -n 40 work/out/part_00.yaml.log || true
             exit 0
           fi
@@ -170,7 +242,8 @@ jobs:
           - Last Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
           - Raw Nodes: ${RAW_COUNT}
           - Deduplicated: ${DEDUP_COUNT}
-          - Live Nodes (<=500ms): ${LIVE_COUNT}
+          - Live Nodes (<=500ms): ${LIVE_ALL}
+          - Kept Top Nodes: ${KEPT_COUNT} (Cloud Latency: ${LAT_MIN} ~ ${LAT_MAX})
           - Note: Non-commercial personal connectivity filtering only.
           EOF
 
@@ -179,7 +252,7 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proxies.yaml README.md
-          git commit -m "chore: update ${LIVE_COUNT} live nodes (<=500ms)"
+          git commit -m "chore: update top ${KEPT_COUNT} live nodes (${LAT_MIN}~${LAT_MAX})"
           git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
           git push --force origin nodes
 
