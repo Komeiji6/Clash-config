@@ -39,7 +39,6 @@ jobs:
         id: fetch
         run: |
           mkdir -p work
-          # 优先拉取 GitHub Raw，失败时自动尝试 jsDelivr 镜像兜底
           curl -fsSL --retry 3 --max-time 30 \
             "https://raw.githubusercontent.com/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy/main/combine/clash.config.yaml" \
             -o work/upstream1.yaml || \
@@ -82,7 +81,7 @@ jobs:
                   clean.append(p)
 
           with open("work/stats_raw.txt", "w") as sf:
-              sf.write(f"{len(proxies)} {len(clean)}")
+              sf.write(f"{len(proxies)} {len(clean)}\n")
 
           if not clean:
               raise SystemExit(0)
@@ -139,7 +138,7 @@ jobs:
               yaml.safe_dump({"proxies": merged}, out, allow_unicode=True, sort_keys=False)
 
           with open("work/stats_live.txt", "w") as sf:
-              sf.write(str(len(merged)))
+              sf.write(f"{len(merged)}\n")
           EOF
 
           /tmp/venv/bin/python work/merge.py
@@ -147,7 +146,8 @@ jobs:
       - name: Validate & Publish to 'nodes' Branch
         if: steps.fetch.outputs.ok == 'true'
         run: |
-          read RAW_COUNT DEDUP_COUNT < work/stats_raw.txt
+          RAW_COUNT=$(awk '{print $1}' work/stats_raw.txt)
+          DEDUP_COUNT=$(awk '{print $2}' work/stats_raw.txt)
           LIVE_COUNT=$(cat work/stats_live.txt)
 
           echo "### 节点筛选报表（<=500ms）" >> "$GITHUB_STEP_SUMMARY"
@@ -175,8 +175,7 @@ jobs:
           EOF
 
           cd out_repo
-          git init
-          git checkout -b nodes
+          git init -b nodes
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add proxies.yaml README.md
