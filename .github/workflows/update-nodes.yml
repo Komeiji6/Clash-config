@@ -1,0 +1,187 @@
+name: Update Filtered Nodes
+
+on:
+  schedule:
+    # 每天 UTC 02:27, 10:27, 18:27 运行（北京时间 10:27, 18:27, 02:27），错开整点拥堵
+    - cron: '27 2,10,18 * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: update-nodes
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+
+jobs:
+  filter-and-publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+
+      - name: Cache clash-speedtest binary
+        id: cache-tool
+        uses: actions/cache@v4
+        with:
+          path: ~/go/bin/clash-speedtest
+          key: clash-speedtest-v1.8.8
+
+      - name: Install clash-speedtest
+        if: steps.cache-tool.outputs.cache-hit != 'true'
+        run: go install github.com/faceair/clash-speedtest@v1.8.8
+
+      - name: Fetch Upstream & Prepare Env
+        id: fetch
+        run: |
+          mkdir -p work
+          # 优先拉取 GitHub Raw，失败时自动尝试 jsDelivr 镜像兜底
+          curl -fsSL --retry 3 --max-time 30 \
+            "https://raw.githubusercontent.com/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy/main/combine/clash.config.yaml" \
+            -o work/upstream1.yaml || \
+          curl -fsSL --retry 2 --max-time 30 \
+            "https://cdn.jsdelivr.net/gh/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy@main/combine/clash.config.yaml" \
+            -o work/upstream1.yaml || true
+
+          if [ ! -s work/upstream1.yaml ] || [ $(wc -c < work/upstream1.yaml) -lt 10240 ]; then
+            echo "Upstream fetch failed or file too small (<10KB). Skipping update safely."
+            echo "ok=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          python3 -m venv /tmp/venv
+          /tmp/venv/bin/pip install -q pyyaml
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+
+      - name: Split and Parallel Test Nodes (<=500ms)
+        if: steps.fetch.outputs.ok == 'true'
+        id: test
+        run: |
+          cat << 'EOF' > work/split.py
+          import os, math, yaml
+
+          with open("work/upstream1.yaml", "r", encoding="utf-8", errors="ignore") as f:
+              data = yaml.safe_load(f) or {}
+
+          proxies = data.get("proxies") or []
+          seen = set()
+          clean = []
+          for p in proxies:
+              if not isinstance(p, dict):
+                  continue
+              srv, port = p.get("server"), p.get("port")
+              if not srv or not port:
+                  continue
+              key = (str(srv), str(port), str(p.get("type", "")), str(p.get("uuid", p.get("password", ""))))
+              if key not in seen:
+                  seen.add(key)
+                  clean.append(p)
+
+          with open("work/stats_raw.txt", "w") as sf:
+              sf.write(f"{len(proxies)} {len(clean)}")
+
+          if not clean:
+              raise SystemExit(0)
+
+          os.makedirs("work/chunks", exist_ok=True)
+          chunks = 20
+          size = max(1, math.ceil(len(clean) / chunks))
+          for i in range(0, len(clean), size):
+              idx = i // size
+              with open(f"work/chunks/part_{idx:02d}.yaml", "w", encoding="utf-8") as out:
+                  yaml.safe_dump({"proxies": clean[i:i+size]}, out, allow_unicode=True, sort_keys=False)
+          EOF
+
+          /tmp/venv/bin/python work/split.py
+
+          mkdir -p work/out work/homes
+          if ls work/chunks/part_*.yaml >/dev/null 2>&1; then
+            export TOOL="$(go env GOPATH)/bin/clash-speedtest"
+            ls work/chunks/part_*.yaml | xargs -n 1 -P 20 -I {} bash -c '
+              in_file="$1"
+              base=$(basename "$in_file")
+              home_dir="work/homes/${base%.yaml}"
+              mkdir -p "$home_dir"
+              HOME="$home_dir" "$TOOL" \
+                -c "$in_file" \
+                -fast \
+                -rename="false" \
+                -min-download-speed 0 \
+                -timeout 1500ms \
+                -max-latency 500ms \
+                -output "work/out/$base" > "work/out/${base}.log" 2>&1 || true
+            ' _ {}
+          fi
+
+          cat << 'EOF' > work/merge.py
+          import glob, yaml
+
+          merged = []
+          name_counts = {}
+          for path in sorted(glob.glob("work/out/part_*.yaml")):
+              with open(path, "r", encoding="utf-8", errors="ignore") as f:
+                  data = yaml.safe_load(f) or {}
+              for p in (data.get("proxies") or []):
+                  if not isinstance(p, dict) or not p.get("server"):
+                      continue
+                  base_name = str(p.get("name") or "Node").strip()
+                  cnt = name_counts.get(base_name, 0) + 1
+                  name_counts[base_name] = cnt
+                  if cnt > 1:
+                      p["name"] = f"{base_name} #{cnt}"
+                  merged.append(p)
+
+          with open("work/proxies.yaml", "w", encoding="utf-8") as out:
+              yaml.safe_dump({"proxies": merged}, out, allow_unicode=True, sort_keys=False)
+
+          with open("work/stats_live.txt", "w") as sf:
+              sf.write(str(len(merged)))
+          EOF
+
+          /tmp/venv/bin/python work/merge.py
+
+      - name: Validate & Publish to 'nodes' Branch
+        if: steps.fetch.outputs.ok == 'true'
+        run: |
+          read RAW_COUNT DEDUP_COUNT < work/stats_raw.txt
+          LIVE_COUNT=$(cat work/stats_live.txt)
+
+          echo "### 节点筛选报表（<=500ms）" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 阶段 | 数量 |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| :--- | :--- |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 原始节点数 | ${RAW_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| 去重后待测数 | ${DEDUP_COUNT} |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| **<=500ms 存活数** | **${LIVE_COUNT}** |" >> "$GITHUB_STEP_SUMMARY"
+
+          if [ "$LIVE_COUNT" -lt 3 ]; then
+            echo "状态：可用节点不足 3 个（当前 ${LIVE_COUNT} 个），已跳过本次覆盖以保护旧节点。" >> "$GITHUB_STEP_SUMMARY"
+            head -n 40 work/out/part_00.yaml.log || true
+            exit 0
+          fi
+
+          mkdir -p out_repo
+          cp work/proxies.yaml out_repo/proxies.yaml
+          cat <<EOF > out_repo/README.md
+          # Filtered Nodes Status
+          - Last Updated: $(date -u '+%Y-%m-%d %H:%M:%S UTC')
+          - Raw Nodes: ${RAW_COUNT}
+          - Deduplicated: ${DEDUP_COUNT}
+          - Live Nodes (<=500ms): ${LIVE_COUNT}
+          - Note: Non-commercial personal connectivity filtering only.
+          EOF
+
+          cd out_repo
+          git init
+          git checkout -b nodes
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add proxies.yaml README.md
+          git commit -m "chore: update ${LIVE_COUNT} live nodes (<=500ms)"
+          git remote add origin "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git"
+          git push --force origin nodes
+
+          echo "状态：✅ 已成功发布至 \`nodes\` 分支。" >> "$GITHUB_STEP_SUMMARY"
