@@ -80,7 +80,7 @@ proxy-providers:
     exclude-type: "http|socks5"
     health-check:
       enable: true
-      url: http://www.gstatic.com/generate_204
+      url: https://www.gstatic.com/generate_204
       interval: 300
       timeout: 3000
       expected-status: 204
@@ -90,8 +90,8 @@ proxy-groups:
   - name: PROXY
     type: select
     proxies:
-      - APAC-AUTO
       - AUTO
+      - APAC-AUTO
       - DIRECT
     use:
       - topfree
@@ -99,7 +99,8 @@ proxy-groups:
     type: url-test
     use:
       - topfree
-    url: http://www.gstatic.com/generate_204
+    url: https://www.gstatic.com/generate_204
+    expected-status: 204
     interval: 300
     tolerance: 50
     lazy: true
@@ -109,7 +110,8 @@ proxy-groups:
     use:
       - topfree
     filter: "(?i)(香港|台湾|日本|新加坡|韩国|Hong\\s*Kong|Taiwan|Taipei|Japan|Tokyo|Osaka|Singapore|Korea|Seoul)|(?:^|[^A-Za-z])(?i:HK|TW|JP|SG|KR|HKG|TWN|JPN|SGP|KOR)(?:[^A-Za-z]|$)"
-    url: http://www.gstatic.com/generate_204
+    url: https://www.gstatic.com/generate_204
+    expected-status: 204
     interval: 300
     tolerance: 50
     lazy: true
