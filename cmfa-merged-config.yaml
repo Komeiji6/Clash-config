@@ -82,7 +82,7 @@ dns:
 proxy-providers:
   free-nodes:
     type: http
-    url: "https://raw.githubusercontent.com/Komeiji6/Clash-config/nodes/proxies.yaml"
+    url: "https://cdn.jsdelivr.net/gh/Komeiji6/Clash-config@nodes/proxies.yaml"
     path: ./proxies/free-nodes.yaml
     interval: 3600
     health-check:
