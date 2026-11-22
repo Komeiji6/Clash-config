@@ -132,40 +132,28 @@ proxy-groups:
 
   # 4. 地区自动分组（匹配 410 棒子生成的 "国家代码 | 纯净度 | ..." 格式）
   - name: 香港
-    type: url-test
+    type: select
     use:
       - free-nodes
     filter: "^HK\\s*\\|"
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
 
   - name: 日本
-    type: url-test
+    type: select
     use:
       - free-nodes
     filter: "^JP\\s*\\|"
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
 
   - name: 新加坡
-    type: url-test
+    type: select
     use:
       - free-nodes
     filter: "^SG\\s*\\|"
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
 
   - name: 美国
-    type: url-test
+    type: select
     use:
       - free-nodes
     filter: "^US\\s*\\|"
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 80
 
   - name: 其他地区
     type: select
