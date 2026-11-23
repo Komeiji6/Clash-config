@@ -80,7 +80,7 @@ dns:
 
 # ==================== 实时精选节点 (直接内嵌，告别二级拉取) ====================
 proxies:
-- name: HK | 优选 | 01
+- name: 香港 | 优选 | 01
   server: 116.213.43.43
   port: 11106
   type: vless
@@ -94,7 +94,7 @@ proxies:
   client-fingerprint: chrome
   network: tcp
   udp: true
-- name: JP | 优选 | 01
+- name: 日本 | 优选 | 01
   network: tcp
   password: 57beeeb0-03fc-4fc9-94da-7604488a7134
   port: 443
@@ -103,7 +103,7 @@ proxies:
   sni: nu2rb.supertoolify.com
   type: trojan
   udp: true
-- name: JP | 优选 | 02
+- name: 日本 | 优选 | 02
   obfs: salamander
   obfs-password: e3ymhs6gbzptjysj
   password: 57beeeb0-03fc-4fc9-94da-7604488a7134
@@ -128,9 +128,9 @@ proxies:
     headers:
       Host: guanwang.awsno.com
     path: /hls/cctv5phd.m3u8
-  name: US | 优选 | 01
+  name: 美国 | 优选 | 01
 - type: vmess
-  name: US | 优选 | 02
+  name: 美国 | 优选 | 02
   server: www.shopify.com
   port: 443
   uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
@@ -145,7 +145,7 @@ proxies:
     headers:
       Host: guanwang.awsno.com
 - type: vmess
-  name: US | 优选 | 03
+  name: 美国 | 优选 | 03
   server: 188.114.99.137
   port: 443
   uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
@@ -161,7 +161,7 @@ proxies:
     headers:
       Host: guanwang.awsno.com
 - type: vmess
-  name: US | 优选 | 04
+  name: 美国 | 优选 | 04
   server: 104.18.42.163
   port: 443
   uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
@@ -187,7 +187,7 @@ proxies:
     method: GET
     path:
     - /QQqun-737805443
-  name: US | 优选 | 05
+  name: 美国 | 优选 | 05
   network: http
   port: 52080
   server: 198.2.224.117
@@ -211,12 +211,12 @@ proxies:
     headers:
       Host: guanwang.awsno.com
     path: /hls/cctv5phd.m3u8
-  name: US | 优选 | 06
+  name: 美国 | 优选 | 06
 - alpn:
   - h3
   auth-str: dongtaiwang.com
   down: '55'
-  name: US | 优选 | 07
+  name: 美国 | 优选 | 07
   password: dongtaiwang.com
   port: 11008
   server: 38.6.222.132
@@ -229,7 +229,7 @@ proxies:
 - alpn:
   - h2
   client-fingerprint: firefox
-  name: US | 优选 | 08
+  name: 美国 | 优选 | 08
   network: xhttp
   port: 443
   server: 45.9.190.245
@@ -242,7 +242,7 @@ proxies:
     host: fortuna.masynbazar.ru
     mode: auto
     path: /
-- name: VN | 纯净 | 01
+- name: 越南 | 纯净 | 01
   network: tcp
   password: 57beeeb0-03fc-4fc9-94da-7604488a7134
   port: 443
@@ -252,7 +252,7 @@ proxies:
   type: trojan
   udp: true
 - client-fingerprint: chrome
-  name: NL | 优选 | 01
+  name: 荷兰 | 优选 | 01
   network: ws
   port: 444
   server: 48.102.173.125
@@ -272,7 +272,7 @@ proxies:
     method: GET
     path:
     - /
-  name: GB | 优选 | 01
+  name: 英国 | 优选 | 01
   network: http
   port: 443
   server: 64.227.41.219
@@ -294,7 +294,7 @@ proxies:
     headers:
       Host: neplay603.gangtype.com
     path: /stream/updates/a66d7902
-  name: NL | 优选 | 02
+  name: 荷兰 | 优选 | 02
 - http-opts:
     headers:
       Host:
@@ -302,7 +302,7 @@ proxies:
     method: GET
     path:
     - /
-  name: GB | 优选 | 02
+  name: 英国 | 优选 | 02
   network: http
   port: 443
   server: 167.99.203.0
@@ -310,7 +310,7 @@ proxies:
   type: vless
   udp: true
   uuid: 40992c2a-513e-4837-9594-23411fd42afd
-- name: NL | 优选 | 03
+- name: 荷兰 | 优选 | 03
   server: 717252g.nl8.h1clayd.click
   port: 443
   type: vless
@@ -327,7 +327,7 @@ proxies:
     grpc-service-name: 204adda7e3da
   udp: true
 - client-fingerprint: chrome
-  name: RU | 优选 | 01
+  name: 俄罗斯 | 优选 | 01
   network: tcp
   port: 443
   server: 136.148.83.69
@@ -338,7 +338,7 @@ proxies:
   uuid: 7dff1be7-b930-0001-a8ad-dc7850168215
   ws-opts:
     path: /
-- name: DE | 优选 | 01
+- name: 德国 | 优选 | 01
   server: dga1de.mateflora.com
   port: 40120
   type: hysteria2
@@ -357,7 +357,7 @@ proxies:
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: mobile.api.Event
-  name: RU | 优选 | 02
+  name: 俄罗斯 | 优选 | 02
   network: grpc
   port: 443
   server: 201.24.116.192
@@ -366,7 +366,7 @@ proxies:
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- name: NL | 优选 | 04
+- name: 荷兰 | 优选 | 04
   server: 48.102.205.89
   port: 22444
   type: vless
@@ -380,7 +380,7 @@ proxies:
   client-fingerprint: edge
   network: tcp
   udp: true
-- name: RU | 优选 | 03
+- name: 俄罗斯 | 优选 | 03
   server: vps3.nemnogogo.com
   port: 443
   type: vless
@@ -399,7 +399,7 @@ proxies:
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: mobile.api.Event
-  name: RU | 优选 | 04
+  name: 俄罗斯 | 优选 | 04
   network: grpc
   port: 443
   server: 201.51.12.98
@@ -411,7 +411,7 @@ proxies:
 - client-fingerprint: firefox
   grpc-opts:
     grpc-service-name: v4-clequinix-globalinetforallalwaysandneverbanyoubelieveme-com
-  name: DE | 优选 | 02
+  name: 德国 | 优选 | 02
   network: grpc
   port: 443
   server: 109.248.17.252
@@ -424,7 +424,7 @@ proxies:
 - alpn:
   - http/1.1
   client-fingerprint: firefox
-  name: DE | 优选 | 03
+  name: 德国 | 优选 | 03
   network: ws
   port: 443
   server: parchment.merlano.monster
@@ -438,14 +438,14 @@ proxies:
       Host: parchment.merlano.monster
     path: /api/de7/stream
 - client-fingerprint: qq
-  name: RU | 优选 | 05
+  name: 俄罗斯 | 优选 | 05
   port: 443
   server: 136.148.83.69
   servername: szqbx-ru-77dc.my-fade.cloud
   tls: true
   type: vless
   uuid: 666821a2-5c3d-0001-a56f-5a3a562d7324
-- name: DE | 优选 | 04
+- name: 德国 | 优选 | 04
   server: 193.160.208.240
   port: 443
   type: vless
@@ -462,7 +462,7 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: firefox
-  name: AT | 优选 | 01
+  name: 奥地利 | 优选 | 01
   network: xhttp
   port: 443
   server: 185.244.182.162
@@ -480,7 +480,7 @@ proxies:
 - alpn:
   - http/1.1
   client-fingerprint: edge
-  name: DE | 优选 | 05
+  name: 德国 | 优选 | 05
   network: ws
   port: 443
   server: cabinet.filnex.baby
@@ -499,7 +499,7 @@ proxies:
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: glush.de7.v1
-  name: DE | 优选 | 06
+  name: 德国 | 优选 | 06
   network: grpc
   port: 443
   server: birchbark.gerqix.online
@@ -512,7 +512,7 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: edge
-  name: DE | 优选 | 07
+  name: 德国 | 优选 | 07
   network: xhttp
   port: 443
   server: arbor.elvano.website
@@ -529,7 +529,7 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: ios
-  name: DE | 优选 | 08
+  name: 德国 | 优选 | 08
   network: xhttp
   port: 443
   server: brookside.moltex.click
@@ -558,12 +558,12 @@ proxies:
     host: heatherfield.moltex.click
     mode: auto
     path: /api/de6/sync
-  name: DE | 优选 | 09
+  name: 德国 | 优选 | 09
 - alpn:
   - h2
   - http/1.1
   client-fingerprint: edge
-  name: DE | 优选 | 10
+  name: 德国 | 优选 | 10
   network: xhttp
   port: 443
   server: terrace.elvano.website
@@ -578,7 +578,7 @@ proxies:
     path: /api/de5/sync
 - client-fingerprint: chrome
   encryption: none
-  name: BG | 优选 | 01
+  name: 保加利亚 | 优选 | 01
   network: xhttp
   port: 8443
   server: plaindune.com
@@ -592,7 +592,7 @@ proxies:
     mode: auto
     path: /api/v1/upload
   xudp: true
-- name: NL | 优选 | 05
+- name: 荷兰 | 优选 | 05
   server: 8a2e72t.nl20.h1clayd.shop
   port: 443
   type: vless
@@ -622,9 +622,9 @@ proxies:
     host: bayleaf.elvano.website
     mode: auto
     path: /api/de3/sync
-  name: DE | 优选 | 11
+  name: 德国 | 优选 | 11
 - client-fingerprint: chrome
-  name: BG | 优选 | 02
+  name: 保加利亚 | 优选 | 02
   network: xhttp
   port: 8443
   server: 78.159.240.72
@@ -641,7 +641,7 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: edge
-  name: DE | 优选 | 12
+  name: 德国 | 优选 | 12
   network: xhttp
   port: 443
   server: palette.merlano.monster
@@ -670,12 +670,12 @@ proxies:
     host: seedling.elvano.website
     mode: auto
     path: /api/de4/sync
-  name: DE | 优选 | 13
+  name: 德国 | 优选 | 13
 - alpn:
   - h2
   - http/1.1
   client-fingerprint: firefox
-  name: DE | 优选 | 14
+  name: 德国 | 优选 | 14
   network: xhttp
   port: 443
   server: rainwater.elvano.website
@@ -704,9 +704,9 @@ proxies:
     host: clearing.moltex.click
     mode: auto
     path: /api/de5/sync
-  name: DE | 优选 | 15
+  name: 德国 | 优选 | 15
 - client-fingerprint: firefox
-  name: DE | 优选 | 16
+  name: 德国 | 优选 | 16
   network: ws
   port: 443
   server: 72.56.238.135
@@ -723,7 +723,7 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: ios
-  name: DE | 优选 | 17
+  name: 德国 | 优选 | 17
   network: xhttp
   port: 443
   server: fresco.merlano.monster
@@ -752,7 +752,7 @@ proxies:
     host: garden.elvano.website
     mode: auto
     path: /api/de3/sync
-  name: DE | 优选 | 18
+  name: 德国 | 优选 | 18
 - alpn:
   - h2
   - http/1.1
@@ -769,76 +769,76 @@ proxies:
     host: gesso.merlano.monster
     mode: auto
     path: /api/de5/sync
-  name: DE | 优选 | 19
+  name: 德国 | 优选 | 19
 - cipher: aes-256-gcm
-  name: IT | 优选 | 01
+  name: 意大利 | 优选 | 01
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.54
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 02
+  name: 意大利 | 优选 | 02
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.72
   type: ss
 - cipher: aes-256-gcm
-  name: IT | 优选 | 03
+  name: 意大利 | 优选 | 03
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.63
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 04
+  name: 意大利 | 优选 | 04
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.27
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 05
+  name: 意大利 | 优选 | 05
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.45
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 06
+  name: 意大利 | 优选 | 06
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.36
   type: ss
 - cipher: aes-256-gcm
-  name: IT | 优选 | 07
+  name: 意大利 | 优选 | 07
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.90
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 08
+  name: 意大利 | 优选 | 08
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.99
   type: ss
   udp: true
 - cipher: aes-256-gcm
-  name: IT | 优选 | 09
+  name: 意大利 | 优选 | 09
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
   server: 202.50.253.81
   type: ss
   udp: true
-- name: IT | 优选 | 10
+- name: 意大利 | 优选 | 10
   server: 202.50.253.18
   port: 19999
   type: ss
   cipher: aes-256-gcm
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   udp: true
-- name: NL | 优选 | 06
+- name: 荷兰 | 优选 | 06
   server: 196.196.148.63
   port: 443
   type: vless
@@ -855,85 +855,20 @@ proxies:
     grpc-service-name: 204adda7e3da
   udp: true
 
-# ==================== 策略组 (无缝直连内嵌节点) ====================
+# ==================== 策略组 (极简平铺直选，无嵌套/无空组/无自动测速) ====================
 proxy-groups:
-  # 1. 日常主开关
+  # 1. 核心选择：所有存活节点直接平铺直选，点选即用
   - name: PROXY
     type: select
+    include-all: true
     proxies:
-      - 纯净节点
-      - 自动选择
-      - 香港
-      - 日本
-      - 新加坡
-      - 美国
-      - 其他地区
       - DIRECT
 
-  # 2. 兜底开关
+  # 2. 漏网之鱼兜底
   - name: 漏网之鱼
     type: select
     proxies:
       - PROXY
-      - DIRECT
-
-  # 3. 质量优选组
-  - name: 纯净节点
-    type: url-test
-    include-all: true
-    filter: "纯净"
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 80
-    empty-fallback: DIRECT
-
-  - name: 自动选择
-    type: url-test
-    include-all: true
-    url: http://www.gstatic.com/generate_204
-    interval: 300
-    tolerance: 50
-    empty-fallback: DIRECT
-
-  # 4. 地区直选组（内嵌备选保底，绝不触发 COMPATIBLE 伪节点）
-  - name: 香港
-    type: select
-    include-all: true
-    filter: "^HK\\s*\\|"
-    proxies:
-      - 自动选择
-      - DIRECT
-
-  - name: 日本
-    type: select
-    include-all: true
-    filter: "^JP\\s*\\|"
-    proxies:
-      - 自动选择
-      - DIRECT
-
-  - name: 新加坡
-    type: select
-    include-all: true
-    filter: "^SG\\s*\\|"
-    proxies:
-      - 自动选择
-      - DIRECT
-
-  - name: 美国
-    type: select
-    include-all: true
-    filter: "^US\\s*\\|"
-    proxies:
-      - 自动选择
-      - DIRECT
-
-  - name: 其他地区
-    type: select
-    include-all: true
-    exclude-filter: "^(HK|JP|SG|US)\\s*\\|"
-    proxies:
-      - 自动选择
       - DIRECT
 
 # ==================== 规则集 (Loyalsoldier/clash-rules 白名单精简版) ====================
