@@ -11,8 +11,11 @@ Clash 节点全量测速筛选与自动发布脚本 (Snapdragon 410 / 512MB RAM 
 5. 全流程位于 /tmp/ (tmpfs)，零 eMMC 磨损，最终原子化单 Commit 强推至 GitHub nodes 分支。
 """
 
+import base64
 import gc
+import json
 import logging
+import urllib.parse
 import os
 import queue
 import re
@@ -82,6 +85,26 @@ UPSTREAM_SOURCES = [
     [
         "https://cdn.jsdelivr.net/gh/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy@main/combine/clash.config.yaml",
         "https://raw.githubusercontent.com/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy/main/combine/clash.config.yaml",
+    ],
+    # 9. peasoft/NoMoreWalls (生肉源: 优质 Vless / Hysteria2 / SS / Trojan 原生链接)
+    [
+        "https://cdn.jsdelivr.net/gh/peasoft/NoMoreWalls@master/list.txt",
+        "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt",
+    ],
+    # 10. Pawdroid/Free-servers (生肉源: Vless Reality / SS 高频测活生肉)
+    [
+        "https://cdn.jsdelivr.net/gh/Pawdroid/Free-servers@main/sub",
+        "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
+    ],
+    # 11. ripaojiedian/freenode (生肉源: 日更活跃 Vless / SS / Reality 生肉)
+    [
+        "https://cdn.jsdelivr.net/gh/ripaojiedian/freenode@main/sub",
+        "https://raw.githubusercontent.com/ripaojiedian/freenode/main/sub",
+    ],
+    # 12. freefq/free (生肉源: 经典海量 v2 生肉订阅)
+    [
+        "https://cdn.jsdelivr.net/gh/freefq/free@master/v2",
+        "https://raw.githubusercontent.com/freefq/free/master/v2",
     ],
 ]
 
@@ -430,6 +453,263 @@ JUNK_NAME_KEYWORDS = (
 INVALID_SERVERS = {"", "127.0.0.1", "127.0.0.53", "localhost", "0.0.0.0", "::", "::1"}
 
 
+def safe_b64decode(s: str) -> str:
+    """安全解码 Base64 字符串（自动补全 padding，兼容 URL-Safe 字符集）。"""
+    s = s.strip().replace(" ", "+").replace("\r", "").replace("\n", "")
+    missing_padding = len(s) % 4
+    if missing_padding:
+        s += "=" * (4 - missing_padding)
+    try:
+        return base64.b64decode(s).decode("utf-8", errors="ignore")
+    except Exception:
+        try:
+            return base64.urlsafe_b64decode(s).decode("utf-8", errors="ignore")
+        except Exception:
+            return ""
+
+
+def parse_vmess(link: str) -> Optional[Dict[str, Any]]:
+    """解析标准 vmess://<base64_json> 节点为 Clash 字典。"""
+    raw = link[8:].strip()
+    decoded = safe_b64decode(raw)
+    if not decoded:
+        return None
+    try:
+        data = json.loads(decoded)
+        server = str(data.get("add", "")).strip()
+        port = int(data.get("port", 0))
+        uuid = str(data.get("id", "")).strip()
+        if not server or not port or not uuid:
+            return None
+        name = str(data.get("ps", f"vmess_{server}")).strip()
+        p = {
+            "name": name,
+            "type": "vmess",
+            "server": server,
+            "port": port,
+            "uuid": uuid,
+            "alterId": int(data.get("aid", 0)),
+            "cipher": str(data.get("scy", "auto")),
+            "udp": True,
+        }
+        tls = str(data.get("tls", "")).lower()
+        sni = str(data.get("sni", "")).strip()
+        if tls == "tls":
+            p["tls"] = True
+            if sni:
+                p["servername"] = sni
+        net = str(data.get("net", "tcp")).lower()
+        if net == "ws":
+            p["network"] = "ws"
+            p["ws-opts"] = {
+                "path": str(data.get("path", "/")),
+                "headers": {"Host": str(data.get("host", sni or server))},
+            }
+        elif net == "grpc":
+            p["network"] = "grpc"
+            p["grpc-opts"] = {
+                "grpc-service-name": str(data.get("path", "")),
+            }
+        return p
+    except Exception:
+        return None
+
+
+def parse_vless(link: str) -> Optional[Dict[str, Any]]:
+    """解析标准 vless://<uuid>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        uuid = u.username
+        host = u.hostname
+        port = u.port
+        if not uuid or not host or not port:
+            return None
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"vless_{host}"
+        qs = urllib.parse.parse_qs(u.query)
+        p = {
+            "name": name,
+            "type": "vless",
+            "server": host,
+            "port": port,
+            "uuid": uuid,
+            "udp": True,
+        }
+        sec = qs.get("security", [""])[0].lower()
+        sni = qs.get("sni", [""])[0]
+        fp = qs.get("fp", [""])[0]
+        flow = qs.get("flow", [""])[0]
+        if sec in ("tls", "reality"):
+            p["tls"] = True
+            if sni:
+                p["servername"] = sni
+            if fp:
+                p["client-fingerprint"] = fp
+            if flow:
+                p["flow"] = flow
+            if sec == "reality":
+                pbk = qs.get("pbk", [""])[0]
+                sid = qs.get("sid", [""])[0]
+                if pbk:
+                    p["reality-opts"] = {
+                        "public-key": pbk,
+                        "short-id": sid or "",
+                    }
+        net = qs.get("type", ["tcp"])[0].lower()
+        if net == "ws":
+            p["network"] = "ws"
+            path = qs.get("path", ["/"])[0]
+            ws_host = qs.get("host", [""])[0] or sni or host
+            p["ws-opts"] = {"path": path, "headers": {"Host": ws_host}}
+        elif net == "grpc":
+            p["network"] = "grpc"
+            service_name = qs.get("serviceName", [""])[0]
+            p["grpc-opts"] = {"grpc-service-name": service_name}
+        return p
+    except Exception:
+        return None
+
+
+def parse_trojan(link: str) -> Optional[Dict[str, Any]]:
+    """解析标准 trojan://<password>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        password = u.username or u.password
+        host = u.hostname
+        port = u.port
+        if not password or not host or not port:
+            return None
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"trojan_{host}"
+        qs = urllib.parse.parse_qs(u.query)
+        sni = qs.get("sni", [""])[0]
+        p = {
+            "name": name,
+            "type": "trojan",
+            "server": host,
+            "port": port,
+            "password": password,
+            "udp": True,
+        }
+        if sni:
+            p["sni"] = sni
+        return p
+    except Exception:
+        return None
+
+
+def parse_ss(link: str) -> Optional[Dict[str, Any]]:
+    """解析 Shadowsocks 原生链接 (支持标准 Base64 及 SIP002 规范)。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"ss_{u.hostname or 'node'}"
+        if "@" in u.netloc:
+            userinfo, hostport = u.netloc.split("@", 1)
+            decoded_user = safe_b64decode(userinfo)
+            if ":" in decoded_user:
+                method, password = decoded_user.split(":", 1)
+            else:
+                return None
+            host, port_str = hostport.split(":", 1)
+            port = int(port_str.split("?")[0])
+        else:
+            decoded = safe_b64decode(u.netloc)
+            if "@" not in decoded:
+                return None
+            cred, hostport = decoded.split("@", 1)
+            method, password = cred.split(":", 1)
+            host, port_str = hostport.split(":", 1)
+            port = int(port_str.split("?")[0])
+
+        return {
+            "name": name,
+            "type": "ss",
+            "server": host,
+            "port": port,
+            "cipher": method,
+            "password": password,
+            "udp": True,
+        }
+    except Exception:
+        return None
+
+
+def parse_hysteria2(link: str) -> Optional[Dict[str, Any]]:
+    """解析 Hysteria2 (hy2) 原生链接为 Clash 字典。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        auth = u.username or u.password or ""
+        host = u.hostname
+        port = u.port
+        if not host or not port:
+            return None
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"hy2_{host}"
+        qs = urllib.parse.parse_qs(u.query)
+        sni = qs.get("sni", [""])[0]
+        insecure = qs.get("insecure", ["0"])[0] == "1"
+        obfs = qs.get("obfs", [""])[0]
+        obfs_password = qs.get("obfs-password", [""])[0]
+        p = {
+            "name": name,
+            "type": "hysteria2",
+            "server": host,
+            "port": port,
+            "password": auth,
+            "udp": True,
+        }
+        if sni:
+            p["sni"] = sni
+        if insecure:
+            p["skip-cert-verify"] = True
+        if obfs:
+            p["obfs"] = obfs
+            if obfs_password:
+                p["obfs-password"] = obfs_password
+        return p
+    except Exception:
+        return None
+
+
+def parse_raw_line(line: str) -> Optional[Dict[str, Any]]:
+    """单行原生代理链接路由与解析。"""
+    line = line.strip()
+    if not line:
+        return None
+    if line.startswith("vmess://"):
+        return parse_vmess(line)
+    elif line.startswith("vless://"):
+        return parse_vless(line)
+    elif line.startswith("trojan://"):
+        return parse_trojan(line)
+    elif line.startswith("ss://"):
+        return parse_ss(line)
+    elif line.startswith("hysteria2://") or line.startswith("hy2://"):
+        return parse_hysteria2(line)
+    return None
+
+
+def parse_base64_payload(text: str) -> List[Dict[str, Any]]:
+    """
+    通用 Base64 生肉订阅解码引擎：
+    - 若整个文本为单段 Base64 编码，自动解码为明文；
+    - 逐行提取 vmess/vless/ss/trojan/hysteria2 链接；
+    - 返回标准 Clash proxy 字典列表。
+    """
+    decoded = safe_b64decode(text)
+    content = (
+        decoded
+        if decoded and any(proto in decoded for proto in ("vmess://", "vless://", "ss://", "trojan://", "hysteria2://", "hy2://"))
+        else text
+    )
+    proxies: List[Dict[str, Any]] = []
+    for line in content.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        p = parse_raw_line(line)
+        if p:
+            proxies.append(p)
+    return proxies
+
+
 # ======================== 阶段 1: 多源上游拉取与去重 ========================
 
 def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, Any]], Dict[str, Any]]:
@@ -445,17 +725,33 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         for url in group:
             log.info("尝试拉取上游节点: %s", url.split("?")[0])
             try:
-                resp = session.get(url, headers=headers, timeout=25)
+                resp = session.get(url, headers=headers, timeout=12)
                 resp.raise_for_status()
-                # 严格只解析 proxies 字段，彻底抛弃上游自带的 rules、proxy-groups、dns 等规则
-                data = yaml.load(resp.text, Loader=YamlLoader)
-                if isinstance(data, dict) and isinstance(data.get("proxies"), list):
-                    proxies_list = [p for p in data["proxies"] if isinstance(p, dict)]
+                text = resp.text
+                proxies_list: List[Dict[str, Any]] = []
+
+                # 1. 优先尝试作为标准 Clash YAML 解析
+                if "proxies:" in text:
+                    try:
+                        data = yaml.load(text, Loader=YamlLoader)
+                        if isinstance(data, dict) and isinstance(data.get("proxies"), list):
+                            proxies_list = [p for p in data["proxies"] if isinstance(p, dict)]
+                    except Exception:
+                        pass
+
+                # 2. 若非 YAML 或 YAML 未解析出节点，自动触发 Base64 / 原生协议极速解码
+                if not proxies_list:
+                    try:
+                        proxies_list = parse_base64_payload(text)
+                    except Exception as e:
+                        log.warning("Base64/Raw 解码异常: %s", e)
+
+                if proxies_list:
                     all_raw_proxies.extend(proxies_list)
                     log.info("拉取成功: 来自 %s (获取到 %d 个原始节点)", url.split("?")[0], len(proxies_list))
                     loaded = True
                     break
-                log.warning("上游响应未包含有效 proxies 列表: %s", url)
+                log.warning("上游响应未包含有效节点数据 (YAML/Base64): %s", url)
             except Exception as exc:
                 log.warning("拉取失败 (%s): %s", url, exc)
         if not loaded:
@@ -501,7 +797,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         # 4. 凭证完整性校验 (缺少 UUID/密码的残缺节点直接丢弃)
         if p_type in ("vmess", "vless") and not proxy.get("uuid"):
             continue
-        if p_type in ("ss", "trojan") and not proxy.get("password"):
+        if p_type in ("ss", "trojan", "hysteria", "hysteria2") and not (proxy.get("password") or proxy.get("auth")):
             continue
 
         unique_key = get_proxy_fingerprint(proxy)
