@@ -13,7 +13,7 @@ ipv6: false                        # 免费节点大多不支持 IPv6，关闭�
 unified-delay: true                # 统一延迟计算，去除握手额外耗时影响
 tcp-concurrent: true               # 开启 TCP 并发连接，提升切节点和首次加载速度
 find-process-mode: strict
-global-client-fingerprint: chrome  # 伪装 Chrome TLS 指纹，减少被风控概率
+# global-client-fingerprint removed in modern mihomo
 
 profile:
   store-selected: true             # 记住手动选择的策略组节点
@@ -885,6 +885,7 @@ proxy-groups:
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 80
+    empty-fallback: DIRECT
 
   - name: 自动选择
     type: url-test
@@ -892,32 +893,48 @@ proxy-groups:
     url: http://www.gstatic.com/generate_204
     interval: 300
     tolerance: 50
+    empty-fallback: DIRECT
 
-  # 4. 地区直选组（直接关联内嵌节点，支持单个点选）
+  # 4. 地区直选组（内嵌备选保底，绝不触发 COMPATIBLE 伪节点）
   - name: 香港
     type: select
     include-all: true
     filter: "^HK\\s*\\|"
+    proxies:
+      - 自动选择
+      - DIRECT
 
   - name: 日本
     type: select
     include-all: true
     filter: "^JP\\s*\\|"
+    proxies:
+      - 自动选择
+      - DIRECT
 
   - name: 新加坡
     type: select
     include-all: true
     filter: "^SG\\s*\\|"
+    proxies:
+      - 自动选择
+      - DIRECT
 
   - name: 美国
     type: select
     include-all: true
     filter: "^US\\s*\\|"
+    proxies:
+      - 自动选择
+      - DIRECT
 
   - name: 其他地区
     type: select
     include-all: true
     exclude-filter: "^(HK|JP|SG|US)\\s*\\|"
+    proxies:
+      - 自动选择
+      - DIRECT
 
 # ==================== 规则集 (Loyalsoldier/clash-rules 白名单精简版) ====================
 rule-providers:
