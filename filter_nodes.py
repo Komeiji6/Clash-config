@@ -89,6 +89,12 @@ BIN_MIHOMO = "/usr/local/bin/mihomo"
 
 # /tmp/ tmpfs 路径定义
 TMP_DIR = Path("/tmp")
+
+# 历史存活节点池与元数据定义 (持久化至 /opt/clash-filter/)
+HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
+HISTORICAL_META_FILE = Path("/opt/clash-filter/historical_meta.json")
+HISTORICAL_MAX_STRIKES = 3      # 连续 3 次测速失联 (即持续 3 小时完全挂掉) 才彻底从历史池注销
+HISTORICAL_MAX_CAPACITY = 120   # 历史池最大容量上限，防无上限膨胀
 TMP_RAW_YAML = TMP_DIR / "raw_nodes.yaml"
 TMP_STAGE1_DIR = TMP_DIR / "mihomo_stage1"
 TMP_STAGE2_DIR = TMP_DIR / "mihomo_stage2"
@@ -277,6 +283,137 @@ def dump_proxies_yaml(path: Path, proxies: List[Dict[str, Any]]) -> None:
         )
 
 
+def get_proxy_fingerprint(proxy: Dict[str, Any]) -> str:
+    """提取节点的唯一身份指纹 (协议、服务器、端口、认证凭据)，免疫命名变更影响。"""
+    server = str(proxy.get("server", "")).strip().lower()
+    port = str(proxy.get("port", "")).strip()
+    p_type = str(proxy.get("type", "")).strip().lower()
+    cred = str(
+        proxy.get("uuid")
+        or proxy.get("password")
+        or proxy.get("auth")
+        or proxy.get("auth-str")
+        or proxy.get("token")
+        or ""
+    ).strip()
+    return f"{p_type}://{server}:{port}:{cred}"
+
+
+def load_historical_pool() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
+    """加载本地历史存活节点池与其元数据（容错失败计数、历史统计）。"""
+    proxies: List[Dict[str, Any]] = []
+    meta: Dict[str, Any] = {}
+
+    if HISTORICAL_POOL_FILE.exists():
+        try:
+            with HISTORICAL_POOL_FILE.open("r", encoding="utf-8") as f:
+                saved_data = yaml.load(f, Loader=YamlLoader)
+                if isinstance(saved_data, dict) and isinstance(saved_data.get("proxies"), list):
+                    proxies = [p for p in saved_data["proxies"] if isinstance(p, dict)]
+        except Exception as exc:
+            log.warning("读取历史存活节点池异常: %s", exc)
+
+    if HISTORICAL_META_FILE.exists():
+        try:
+            with HISTORICAL_META_FILE.open("r", encoding="utf-8") as f:
+                meta = json.load(f)
+                if not isinstance(meta, dict):
+                    meta = {}
+        except Exception as exc:
+            log.warning("读取历史节点元数据异常: %s", exc)
+
+    return proxies, meta
+
+
+def update_and_save_historical_pool(
+    current_verified_proxies: List[Dict[str, Any]],
+    old_historical_proxies: List[Dict[str, Any]],
+    old_meta: Dict[str, Any],
+) -> None:
+    """
+    终极容错缓冲机制（3 振出局 + 自动换血 + 原子落盘）：
+    1. 当期实测合格节点：首要保留，连续失联计数重置为 0。
+    2. 历史老节点本轮失联：触发容错缓冲（连续失联计数 +1）。
+       - 失联次数 < 3：保留在本地历史池中，赋予下轮复活测试机会（防校园网偶发丢包误杀）。
+       - 连续失联 >= 3 (即持续 3 小时完全无法连通)：判定彻底报废，永久注销移出。
+    3. 全局去重与最大容量 (HISTORICAL_MAX_CAPACITY) 控制。
+    4. 采用 tmpfs 临时写入 + 原子重命名替换，零磁盘碎片且断电不损坏。
+    """
+    now_utc_str = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
+    new_meta: Dict[str, Any] = {}
+
+    # 1. 建立本轮成功节点的指纹映射
+    success_map: Dict[str, Dict[str, Any]] = {}
+    for p in current_verified_proxies:
+        fp = get_proxy_fingerprint(p)
+        success_map[fp] = p
+        prev_entry = old_meta.get(fp, {})
+        new_meta[fp] = {
+            "name": p.get("name", "unknown"),
+            "fails": 0,
+            "first_seen": prev_entry.get("first_seen", now_utc_str),
+            "last_success": now_utc_str,
+        }
+
+    # 2. 检查老节点池中的节点：如果本轮未成功，评估是否在容错缓冲期内
+    preserved_grace_proxies: List[Dict[str, Any]] = []
+    purged_count = 0
+    grace_count = 0
+
+    for old_p in old_historical_proxies:
+        fp = get_proxy_fingerprint(old_p)
+        if fp in success_map:
+            # 本轮已通过实测入围
+            continue
+
+        prev_entry = old_meta.get(fp, {})
+        curr_fails = int(prev_entry.get("fails", 0)) + 1
+
+        if curr_fails < HISTORICAL_MAX_STRIKES:
+            grace_count += 1
+            preserved_grace_proxies.append(old_p)
+            new_meta[fp] = {
+                "name": old_p.get("name", "unknown"),
+                "fails": curr_fails,
+                "first_seen": prev_entry.get("first_seen", now_utc_str),
+                "last_success": prev_entry.get("last_success", "unknown"),
+            }
+            log.info("历史节点 [%s] 本轮偶发失联 (容错缓冲 %d/%d)，保留待下次复试",
+                     old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
+        else:
+            purged_count += 1
+            log.info("历史节点 [%s] 连续 %d 次测速失联 (已持续 %d 小时)，正式从历史池淘汰注销",
+                     old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
+
+    # 3. 合并：当前实测活节点 + 容错保护节点
+    combined_pool: List[Dict[str, Any]] = list(current_verified_proxies) + preserved_grace_proxies
+
+    # 4. 容量控制 (超出 HISTORICAL_MAX_CAPACITY 时截断)
+    if len(combined_pool) > HISTORICAL_MAX_CAPACITY:
+        combined_pool = combined_pool[:HISTORICAL_MAX_CAPACITY]
+        retained_fps = {get_proxy_fingerprint(p) for p in combined_pool}
+        new_meta = {fp: v for fp, v in new_meta.items() if fp in retained_fps}
+
+    # 5. 原子化安全落盘 (在 tmpfs 临时写入后原子移动替换，防断电文件损坏)
+    try:
+        tmp_pool_file = TMP_DIR / "saved_working_nodes.yaml.tmp"
+        tmp_meta_file = TMP_DIR / "historical_meta.json.tmp"
+
+        dump_proxies_yaml(tmp_pool_file, combined_pool)
+        with tmp_meta_file.open("w", encoding="utf-8") as f:
+            json.dump(new_meta, f, ensure_ascii=False, indent=2)
+
+        shutil.move(str(tmp_pool_file), str(HISTORICAL_POOL_FILE))
+        shutil.move(str(tmp_meta_file), str(HISTORICAL_META_FILE))
+
+        log.info(
+            "🎉 历史保活池更新完毕: 当期实测合格 %d 个, 容错保活 %d 个, 连续失联淘汰 %d 个 -> 当前总蓄水容量 %d 个",
+            len(current_verified_proxies), grace_count, purged_count, len(combined_pool)
+        )
+    except Exception as exc:
+        log.warning("原子化存档历史存活节点异常: %s", exc)
+
+
 # 有效成熟的代理协议类型白名单 (严格排除 compatible 占位符、http/socks5 明文、非代理规则)
 VALID_PROXY_TYPES = {
     "ss", "ssr", "vmess", "vless", "trojan",
@@ -295,7 +432,7 @@ INVALID_SERVERS = {"", "127.0.0.1", "127.0.0.53", "localhost", "0.0.0.0", "::", 
 
 # ======================== 阶段 1: 多源上游拉取与去重 ========================
 
-def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
+def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, Any]], Dict[str, Any]]:
     """多源全量拉取上游订阅节点（仅提取 proxies，严格忽略自带 rules/groups），去重并过滤无效节点。"""
     session = requests.Session()
     session.trust_env = False
@@ -326,18 +463,11 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
 
     session.close()
 
-    # 核心保障：自动回流上一轮成功入库的历史存活节点（彻底解决“上一次明明好用的节点更新后突然消失”的问题）
-    HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
-    if HISTORICAL_POOL_FILE.exists():
-        try:
-            with HISTORICAL_POOL_FILE.open("r", encoding="utf-8") as f:
-                saved_data = yaml.load(f, Loader=YamlLoader)
-                if isinstance(saved_data, dict) and isinstance(saved_data.get("proxies"), list):
-                    saved_proxies = [p for p in saved_data["proxies"] if isinstance(p, dict)]
-                    all_raw_proxies.extend(saved_proxies)
-                    log.info("成功回流上一轮在用存活节点: %d 个 (进入保活复测队列)", len(saved_proxies))
-        except Exception as exc:
-            log.warning("读取历史存活节点池异常: %s", exc)
+    # 核心保障：自动回流历史存活节点池（带 3 振出局容错元数据）
+    old_historical_proxies, old_meta = load_historical_pool()
+    if old_historical_proxies:
+        all_raw_proxies.extend(old_historical_proxies)
+        log.info("成功回流历史保活节点池: %d 个 (进入保活复测队列)", len(old_historical_proxies))
 
     if not all_raw_proxies:
         raise RuntimeError("所有上游镜像源均拉取失败，终止任务。")
@@ -374,15 +504,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
         if p_type in ("ss", "trojan") and not proxy.get("password"):
             continue
 
-        credential = str(
-            proxy.get("uuid")
-            or proxy.get("password")
-            or proxy.get("auth")
-            or proxy.get("auth-str")
-            or proxy.get("token")
-            or ""
-        ).strip()
-        unique_key = (server, port, p_type, credential)
+        unique_key = get_proxy_fingerprint(proxy)
         if unique_key in seen_keys:
             continue
         seen_keys.add(unique_key)
@@ -396,7 +518,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
 
     dedup_count = len(dedup_proxies)
     log.info("多源汇聚完成: 原始节点 %d 个 -> 全量待测 %d 个 (已严格过滤非节点规则与无效服务器)", raw_count, dedup_count)
-    return dedup_proxies, raw_count, dedup_count
+    return dedup_proxies, raw_count, dedup_count, old_historical_proxies, old_meta
 
 
 # ======================== 阶段 2: Mihomo 高并发握手初筛 ========================
@@ -1165,6 +1287,8 @@ def atomic_push_to_github(
     raw_count: int,
     dedup_count: int,
     alive_count: int,
+    old_historical_proxies: List[Dict[str, Any]],
+    old_meta: Dict[str, Any],
 ) -> None:
     """在 /tmp/out_repo 初始化单 commit 孤儿分支并原子化强推至 GitHub nodes 分支。"""
     update_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
@@ -1269,13 +1393,12 @@ def atomic_push_to_github(
     except Exception as exc:
         log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
 
-    # 保存当前通过全量验证的高质量节点至本地历史保活池，供下次测速自动回流
-    try:
-        HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
-        dump_proxies_yaml(HISTORICAL_POOL_FILE, final_proxies)
-        log.info("已将本轮 %d 个合格存活节点存档至本地历史保活池。", len(final_proxies))
-    except Exception as exc:
-        log.warning("存档历史存活节点异常: %s", exc)
+    # 核心保障：使用 3 振出局与容错缓冲算法，更新本地历史保活池
+    update_and_save_historical_pool(
+        current_verified_proxies=final_proxies,
+        old_historical_proxies=old_historical_proxies,
+        old_meta=old_meta,
+    )
 
     # 自动刷新 jsdelivr 全球 CDN 边缘缓存，确保国内免代理客户端秒级拉取最新节点
     try:
@@ -1299,8 +1422,8 @@ def main() -> int:
         cleanup_tmp()
         ensure_system_time_and_network()
 
-        # 1. 全量拉取上游与去重
-        proxies, raw_count, dedup_count = fetch_and_dedup()
+        # 1. 全量拉取上游与去重并回流历史节点池
+        proxies, raw_count, dedup_count, old_hist_proxies, old_hist_meta = fetch_and_dedup()
         if dedup_count < MIN_SAFEGUARD_NODES:
             log.critical("[熔断保护] 上游有效节点仅 %d 个 (< %d)，终止发布！",
                          dedup_count, MIN_SAFEGUARD_NODES)
@@ -1337,12 +1460,14 @@ def main() -> int:
                          len(final_records), MIN_SAFEGUARD_NODES)
             return 1
 
-        # 5. 原子化强推至 GitHub nodes 分支
+        # 5. 原子化强推至 GitHub nodes 分支并更新历史保活池
         atomic_push_to_github(
             final_records=final_records,
             raw_count=raw_count,
             dedup_count=dedup_count,
             alive_count=alive_count,
+            old_historical_proxies=old_hist_proxies,
+            old_meta=old_hist_meta,
         )
 
         elapsed = time.monotonic() - start_ts
