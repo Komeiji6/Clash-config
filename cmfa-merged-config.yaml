@@ -1,41 +1,35 @@
-# ============================================================
-# Komeiji6/Clash-config 主配置文件 (适用于 Mihomo / CMFA / Clash Verge)
-# 节点直接内嵌直出（零 proxy-providers 二级套娃），规则外挂分流
-# ============================================================
-
-# ==================== 基础设置 ====================
 mixed-port: 7890
 allow-lan: true
-bind-address: "*"
+bind-address: '*'
 mode: rule
 log-level: info
-ipv6: false                        # 免费节点大多不支持 IPv6，关闭可防泄露和断流
-unified-delay: true                # 统一延迟计算，去除握手额外耗时影响
-tcp-concurrent: true               # 开启 TCP 并发连接，提升切节点和首次加载速度
+ipv6: false
+unified-delay: true
+tcp-concurrent: true
 find-process-mode: strict
-# global-client-fingerprint removed in modern mihomo
-
 profile:
-  store-selected: true             # 记住手动选择的策略组节点
-  store-fake-ip: true              # 缓存 Fake-IP 映射，减少重启后的连接中断
-
-# ==================== 域名嗅探 (配合 Fake-IP 防止分流失效) ====================
+  store-selected: true
+  store-fake-ip: true
 sniffer:
   enable: true
   parse-pure-ip: true
   sniff:
     HTTP:
-      ports: [80, 8080-8880]
+      ports:
+      - 80
+      - 8080-8880
       override-destination: true
     TLS:
-      ports: [443, 8443]
+      ports:
+      - 443
+      - 8443
     QUIC:
-      ports: [443, 8443]
+      ports:
+      - 443
+      - 8443
   skip-domain:
-    - "Mijia Cloud"
-    - "+.push.apple.com"
-
-# ==================== DNS 设置 (DoH + Fake-IP) ====================
+  - Mijia Cloud
+  - +.push.apple.com
 dns:
   enable: true
   listen: 0.0.0.0:1053
@@ -43,42 +37,40 @@ dns:
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
-    - "*.lan"
-    - "*.local"
-    - "localhost.ptlogin2.qq.com"
-    - "+.srv.nintendo.net"
-    - "+.stun.playstation.net"
-    - "xbox.*.microsoft.com"
-    - "+.xboxlive.com"
-    - "time.*.com"
-    - "time.*.gov"
-    - "time.*.edu.cn"
-    - "time.*.apple.com"
-    - "ntp.*.com"
-    - "+.msftconnecttest.com"
-    - "+.msftncsi.com"
-    - "connectivitycheck.gstatic.com"
-    - "captive.apple.com"
+  - '*.lan'
+  - '*.local'
+  - localhost.ptlogin2.qq.com
+  - +.srv.nintendo.net
+  - +.stun.playstation.net
+  - xbox.*.microsoft.com
+  - +.xboxlive.com
+  - time.*.com
+  - time.*.gov
+  - time.*.edu.cn
+  - time.*.apple.com
+  - ntp.*.com
+  - +.msftconnecttest.com
+  - +.msftncsi.com
+  - connectivitycheck.gstatic.com
+  - captive.apple.com
   default-nameserver:
-    - 223.5.5.5
-    - 119.29.29.29
+  - 223.5.5.5
+  - 119.29.29.29
   proxy-server-nameserver:
-    - https://dns.alidns.com/dns-query
-    - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
   nameserver:
-    - https://dns.alidns.com/dns-query
-    - https://doh.pub/dns-query
+  - https://dns.alidns.com/dns-query
+  - https://doh.pub/dns-query
   fallback:
-    - https://dns.google/dns-query
-    - https://cloudflare-dns.com/dns-query
+  - https://dns.google/dns-query
+  - https://cloudflare-dns.com/dns-query
   fallback-filter:
     geoip: true
     geoip-code: CN
     ipcidr:
-      - 240.0.0.0/4
-      - 0.0.0.0/32
-
-# ==================== 实时精选节点 (直接内嵌，告别二级拉取) ====================
+    - 240.0.0.0/4
+    - 0.0.0.0/32
 proxies:
 - name: 香港 | 优选 | 01
   server: 116.213.43.43
@@ -94,129 +86,23 @@ proxies:
   client-fingerprint: chrome
   network: tcp
   udp: true
-- name: 日本 | 优选 | 01
-  network: tcp
-  password: 57beeeb0-03fc-4fc9-94da-7604488a7134
-  port: 443
-  server: nu2rb.supertoolify.com
-  skip-cert-verify: true
-  sni: nu2rb.supertoolify.com
-  type: trojan
-  udp: true
-- name: 日本 | 优选 | 02
+- auth: 57beeeb0-03fc-4fc9-94da-7604488a7134
+  name: 新加坡 | 优选 | 01
   obfs: salamander
-  obfs-password: e3ymhs6gbzptjysj
+  obfs-password: sj1awrdwnn5lbuno
   password: 57beeeb0-03fc-4fc9-94da-7604488a7134
   port: 443
-  server: dg3rb.ianai.it.com
+  server: bgsg2.hikigo.com
   skip-cert-verify: true
-  sni: dg3rb.ianai.it.com
+  sni: bgsg2.hikigo.com
   tls: false
   type: hysteria2
-- alterId: 0
-  cipher: auto
-  network: ws
-  port: 443
-  server: 172.67.190.164
-  servername: guanwang.awsno.com
-  skip-cert-verify: true
-  tls: true
-  type: vmess
   udp: true
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  ws-opts:
-    headers:
-      Host: guanwang.awsno.com
-    path: /hls/cctv5phd.m3u8
-  name: 美国 | 优选 | 01
-- type: vmess
-  name: 美国 | 优选 | 02
-  server: www.shopify.com
-  port: 443
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  cipher: auto
-  alterId: 0
-  tls: true
-  servername: guanwang.awsno.com
-  sni: guanwang.awsno.com
-  network: ws
-  ws-opts:
-    path: /hls/cctv5phd.m3u8
-    headers:
-      Host: guanwang.awsno.com
-- type: vmess
-  name: 美国 | 优选 | 03
-  server: 188.114.99.137
-  port: 443
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  cipher: auto
-  alterId: 0
-  tls: true
-  servername: guanwang.awsno.com
-  sni: guanwang.awsno.com
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: /hls/cctv5phd.m3u8
-    headers:
-      Host: guanwang.awsno.com
-- type: vmess
-  name: 美国 | 优选 | 04
-  server: 104.18.42.163
-  port: 443
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  cipher: auto
-  alterId: 0
-  tls: true
-  servername: guanwang.awsno.com
-  sni: guanwang.awsno.com
-  client-fingerprint: chrome
-  network: ws
-  ws-opts:
-    path: /hls/cctv5phd.m3u8
-    headers:
-      Host: guanwang.awsno.com
-- alpn:
-  - ''
-  alterId: 0
-  cipher: auto
-  http-opts:
-    headers:
-      Host:
-      - down-cdn.dingtalk.com
-    method: GET
-    path:
-    - /QQqun-737805443
-  name: 美国 | 优选 | 05
-  network: http
-  port: 52080
-  server: 198.2.224.117
-  skip-cert-verify: true
-  tls: false
-  type: vmess
-  udp: true
-  uuid: 9be3c602-c743-4a19-98c2-c74d85ffc4c1
-- alterId: 0
-  cipher: auto
-  network: ws
-  port: 443
-  server: 172.64.145.93
-  servername: guanwang.awsno.com
-  skip-cert-verify: true
-  tls: true
-  type: vmess
-  udp: true
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  ws-opts:
-    headers:
-      Host: guanwang.awsno.com
-    path: /hls/cctv5phd.m3u8
-  name: 美国 | 优选 | 06
 - alpn:
   - h3
   auth-str: dongtaiwang.com
   down: '55'
-  name: 美国 | 优选 | 07
+  name: 美国 | 优选 | 01
   password: dongtaiwang.com
   port: 11008
   server: 38.6.222.132
@@ -226,44 +112,102 @@ proxies:
   tls: true
   type: hysteria
   up: '11'
-- alpn:
-  - h2
-  client-fingerprint: firefox
-  name: 美国 | 优选 | 08
-  network: xhttp
-  port: 443
-  server: 45.9.190.245
-  servername: fortuna.masynbazar.ru
+- type: hysteria
+  name: 美国 | 优选 | 02
+  server: 38.6.222.131
+  port: 11008
+  password: dongtaiwang.com
   tls: true
-  type: vless
-  udp: true
-  uuid: a5b1d16b-719b-4bd6-9d7b-fe6d84607da9
-  xhttp-opts:
-    host: fortuna.masynbazar.ru
-    mode: auto
-    path: /
-- name: 越南 | 纯净 | 01
-  network: tcp
-  password: 57beeeb0-03fc-4fc9-94da-7604488a7134
-  port: 443
-  server: xvxn1hkzf.mateflora.com
+  servername: bing.com
+  sni: bing.com
   skip-cert-verify: true
-  sni: xvxn1hkzf.mateflora.com
-  type: trojan
+  alpn:
+  - h3
+  up: '11'
+  down: '55'
+  auth-str: dongtaiwang.com
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 01
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.63
+  type: ss
   udp: true
-- client-fingerprint: chrome
-  name: 荷兰 | 优选 | 01
-  network: ws
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 02
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.90
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 03
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.99
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 04
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.72
+  type: ss
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 05
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.54
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 06
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.45
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 07
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.36
+  type: ss
+- name: 荷兰 | 优选 | 01
+  server: 48.102.173.24
   port: 444
-  server: 48.102.173.125
-  servername: neplay603.gangtype.com
-  tls: true
   type: vless
   uuid: ef5a57c7-84d5-4f86-b99c-875a16da485f
+  tls: true
+  servername: neplay603.gangtype.com
+  client-fingerprint: firefox
+  network: ws
   ws-opts:
+    path: /stream/updates/a66d7902
     headers:
       Host: neplay603.gangtype.com
-    path: /stream/updates/a66d7902
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 08
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.18
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 09
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.81
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 10
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.27
+  type: ss
+  udp: true
 - encryption: none
   http-opts:
     headers:
@@ -281,20 +225,23 @@ proxies:
   udp: true
   uuid: 40992c2a-513e-4837-9594-23411fd42afd
   xudp: true
-- client-fingerprint: firefox
-  network: ws
-  port: 444
-  server: 48.102.173.24
-  servername: neplay603.gangtype.com
-  tls: true
+- name: 芬兰 | 优选 | 01
+  server: 196.196.208.22
+  port: 443
   type: vless
+  uuid: cae99415-10a6-4317-81bd-19a4586b5d76
+  tls: true
+  reality-opts:
+    public-key: _yJGJ5q-8IxTuWFcoy5wpKKYtk9p9q4lQ6svfXC1IUU
+    short-id: 621290c77645b731
+  servername: 9303d6x.fi-p1b.h1clayd.click
+  client-fingerprint: firefox
+  network: xhttp
+  xhttp-opts:
+    path: /f57a81c99fea
+    host: 9303d6x.fi-p1b.h1clayd.click
+    mode: auto
   udp: true
-  uuid: ef5a57c7-84d5-4f86-b99c-875a16da485f
-  ws-opts:
-    headers:
-      Host: neplay603.gangtype.com
-    path: /stream/updates/a66d7902
-  name: 荷兰 | 优选 | 02
 - http-opts:
     headers:
       Host:
@@ -310,54 +257,24 @@ proxies:
   type: vless
   udp: true
   uuid: 40992c2a-513e-4837-9594-23411fd42afd
-- name: 荷兰 | 优选 | 03
-  server: 717252g.nl8.h1clayd.click
-  port: 443
-  type: vless
-  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
-  tls: true
-  reality-opts:
-    public-key: PD8Jdlg3xB9QY--jwQjp8PFPzCS8-Oryw6-HWBcHMFU
-    short-id: d3bd772514c87d28
-  servername: 717252g.nl8.h1clayd.click
-  client-fingerprint: chrome
-  network: grpc
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: 204adda7e3da
-  udp: true
 - client-fingerprint: chrome
-  name: 俄罗斯 | 优选 | 01
-  network: tcp
-  port: 443
-  server: 136.148.83.69
-  servername: szqbx-ru-77dc.my-fade.cloud
+  name: 荷兰 | 优选 | 02
+  network: ws
+  port: 444
+  server: 48.102.173.125
+  servername: neplay603.gangtype.com
   tls: true
   type: vless
-  udp: true
-  uuid: 7dff1be7-b930-0001-a8ad-dc7850168215
+  uuid: ef5a57c7-84d5-4f86-b99c-875a16da485f
   ws-opts:
-    path: /
-- name: 德国 | 优选 | 01
-  server: dga1de.mateflora.com
-  port: 40120
-  type: hysteria2
-  password: 57beeeb0-03fc-4fc9-94da-7604488a7134
-  auth: 57beeeb0-03fc-4fc9-94da-7604488a7134
-  sni: psstatic.cdn.bcebos.com
-  up: 100
-  down: 200
-  skip-cert-verify: true
-  alpn:
-  - h3
-  obfs: salamander
-  obfs-password: pz7lyeav76a5wqzb
-  udp: true
+    headers:
+      Host: neplay603.gangtype.com
+    path: /stream/updates/a66d7902
 - client-fingerprint: firefox
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 02
+  name: 俄罗斯 | 优选 | 01
   network: grpc
   port: 443
   server: 201.24.116.192
@@ -366,65 +283,83 @@ proxies:
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- name: 荷兰 | 优选 | 04
-  server: 48.102.205.89
-  port: 22444
-  type: vless
-  uuid: a9ff24d3-f308-4e72-acb9-a76062583837
-  tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: T1BWBw3lq9G1LiQ7eQSPfdNQic7bUMEbdFNJBewAwB8
-    short-id: 6ad3c0f1e9b2478a
-  servername: fontanka.ru
-  client-fingerprint: edge
-  network: tcp
-  udp: true
-- name: 俄罗斯 | 优选 | 03
+- alpn:
+  - h2
+  client-fingerprint: firefox
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯 | 优选 | 02
+  network: grpc
+  port: 443
   server: vps3.nemnogogo.com
+  servername: vps3.nemnogogo.com
+  tls: true
+  type: vless
+  udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- alpn:
+  - h3
+  auth: 57beeeb0-03fc-4fc9-94da-7604488a7134
+  down: 200
+  name: 德国 | 优选 | 01
+  obfs: salamander
+  obfs-password: pz7lyeav76a5wqzb
+  password: 57beeeb0-03fc-4fc9-94da-7604488a7134
+  port: 40120
+  server: dga1de.mateflora.com
+  skip-cert-verify: true
+  sni: psstatic.cdn.bcebos.com
+  type: hysteria2
+  udp: true
+  up: 100
+- client-fingerprint: firefox
+  name: 德国 | 优选 | 02
+  network: ws
+  port: 443
+  server: 72.56.238.135
+  servername: parchment.merlano.monster
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  ws-opts:
+    headers:
+      Host: parchment.merlano.monster
+    path: /api/de7/stream
+- name: 德国 | 优选 | 03
+  server: inlay.merlano.monster
   port: 443
   type: vless
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
   tls: true
   alpn:
-  - h2
-  servername: vps3.nemnogogo.com
+  - http/1.1
+  servername: inlay.merlano.monster
   client-fingerprint: firefox
-  network: grpc
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: mobile.api.Event
+  network: ws
+  ws-opts:
+    path: /api/de3/stream
+    headers:
+      Host: inlay.merlano.monster
   udp: true
 - client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 04
-  network: grpc
+  name: 德国 | 优选 | 04
+  network: xhttp
   port: 443
-  server: 201.51.12.98
-  servername: vps3.nemnogogo.com
+  server: 193.160.208.240
+  servername: 193.160.208.240
   tls: true
   type: vless
   udp: true
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- client-fingerprint: firefox
-  grpc-opts:
-    grpc-service-name: v4-clequinix-globalinetforallalwaysandneverbanyoubelieveme-com
-  name: 德国 | 优选 | 02
-  network: grpc
-  port: 443
-  server: 109.248.17.252
-  servername: v4.clequinix.globalinetforallalwaysandneverbanyoubelieveme.com
-  tls: true
-  type: vless
-  udp: true
-  uuid: 9000a7f3-df2a-49a8-ae56-3e7777bd32f7
-  xudp: true
+  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
+  xhttp-opts:
+    mode: auto
+    path: /assets/twru01/
 - alpn:
   - http/1.1
   client-fingerprint: firefox
-  name: 德国 | 优选 | 03
+  name: 德国 | 优选 | 05
   network: ws
   port: 443
   server: parchment.merlano.monster
@@ -437,27 +372,51 @@ proxies:
     headers:
       Host: parchment.merlano.monster
     path: /api/de7/stream
-- client-fingerprint: qq
-  name: 俄罗斯 | 优选 | 05
+- alpn:
+  - http/1.1
+  client-fingerprint: edge
+  name: 德国 | 优选 | 06
+  network: ws
   port: 443
-  server: 136.148.83.69
-  servername: szqbx-ru-77dc.my-fade.cloud
+  server: cabinet.filnex.baby
+  servername: claywick.elvano.website
   tls: true
   type: vless
-  uuid: 666821a2-5c3d-0001-a56f-5a3a562d7324
-- name: 德国 | 优选 | 04
-  server: 193.160.208.240
-  port: 443
-  type: vless
-  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
-  tls: true
-  servername: 193.160.208.240
-  client-fingerprint: firefox
-  network: xhttp
-  xhttp-opts:
-    path: /assets/twru01/
-    mode: auto
   udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  ws-opts:
+    headers:
+      Host: cabinet.filnex.baby
+    path: /api/de7/stream
+- client-fingerprint: firefox
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯 | 优选 | 03
+  network: grpc
+  port: 443
+  server: 201.51.12.98
+  servername: vps3.nemnogogo.com
+  tls: true
+  type: vless
+  udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- alpn:
+  - http/1.1
+  client-fingerprint: edge
+  name: 德国 | 优选 | 07
+  network: ws
+  port: 443
+  server: cedar.filnex.baby
+  servername: fieldstone.moltex.click
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  ws-opts:
+    headers:
+      Host: cedar.filnex.baby
+    path: /api/de7/stream
 - alpn:
   - h2
   - http/1.1
@@ -477,29 +436,28 @@ proxies:
     sc-max-each-post-bytes: 1000000
     sc-min-posts-interval-ms: 30
     x-padding-bytes: 100-1000
-- alpn:
-  - http/1.1
-  client-fingerprint: edge
-  name: 德国 | 优选 | 05
-  network: ws
+- name: 德国 | 优选 | 08
+  server: 201.24.124.187
   port: 443
-  server: cabinet.filnex.baby
-  servername: claywick.elvano.website
-  tls: true
   type: vless
-  udp: true
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  ws-opts:
-    headers:
-      Host: cabinet.filnex.baby
-    path: /api/de7/stream
+  tls: true
+  alpn:
+  - h2
+  servername: tapestry.gerqix.online
+  client-fingerprint: firefox
+  network: grpc
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: glush.de3.v1
+  udp: true
 - alpn:
   - h2
   client-fingerprint: chrome
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: glush.de7.v1
-  name: 德国 | 优选 | 06
+  name: 德国 | 优选 | 09
   network: grpc
   port: 443
   server: birchbark.gerqix.online
@@ -508,152 +466,20 @@ proxies:
   type: vless
   udp: true
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
-  name: 德国 | 优选 | 07
-  network: xhttp
+- name: 德国 | 优选 | 10
+  server: lowland.moltex.click
   port: 443
-  server: arbor.elvano.website
-  servername: arbor.elvano.website
-  tls: true
   type: vless
-  udp: true
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: arbor.elvano.website
-    mode: auto
-    path: /api/de7/sync
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: ios
-  name: 德国 | 优选 | 08
-  network: xhttp
-  port: 443
-  server: brookside.moltex.click
-  servername: brookside.moltex.click
   tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: brookside.moltex.click
-    mode: auto
-    path: /api/de7/sync
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
-  network: xhttp
-  port: 443
-  server: heatherfield.moltex.click
-  servername: heatherfield.moltex.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: heatherfield.moltex.click
-    mode: auto
-    path: /api/de6/sync
-  name: 德国 | 优选 | 09
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
-  name: 德国 | 优选 | 10
-  network: xhttp
-  port: 443
-  server: terrace.elvano.website
-  servername: terrace.elvano.website
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: terrace.elvano.website
-    mode: auto
-    path: /api/de5/sync
-- client-fingerprint: chrome
-  encryption: none
-  name: 保加利亚 | 优选 | 01
-  network: xhttp
-  port: 8443
-  server: plaindune.com
-  servername: plaindune.com
-  tls: true
-  type: vless
-  udp: true
-  uuid: 37af0181-5598-4aad-a040-d926bcb65757
-  xhttp-opts:
-    host: plaindune.com
-    mode: auto
-    path: /api/v1/upload
-  xudp: true
-- name: 荷兰 | 优选 | 05
-  server: 8a2e72t.nl20.h1clayd.shop
-  port: 443
-  type: vless
-  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
-  tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: VZS639V1i-35g7VXb9EoTYL-Srm7858sxcvFAunncmA
-    short-id: 8d0d0679f42ffd98
-  servername: 8a2e72t.nl20.h1clayd.shop
+  servername: lowland.moltex.click
   client-fingerprint: chrome
-  network: tcp
-  udp: true
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
   network: xhttp
-  port: 443
-  server: bayleaf.elvano.website
-  servername: bayleaf.elvano.website
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
   xhttp-opts:
-    host: bayleaf.elvano.website
-    mode: auto
     path: /api/de3/sync
-  name: 德国 | 优选 | 11
-- client-fingerprint: chrome
-  name: 保加利亚 | 优选 | 02
-  network: xhttp
-  port: 8443
-  server: 78.159.240.72
-  servername: plaindune.com
-  tls: true
-  type: vless
-  udp: true
-  uuid: 37af0181-5598-4aad-a040-d926bcb65757
-  xhttp-opts:
-    host: plaindune.com
+    host: lowland.moltex.click
     mode: auto
-    path: /api/v1/upload
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
-  name: 德国 | 优选 | 12
-  network: xhttp
-  port: 443
-  server: palette.merlano.monster
-  servername: palette.merlano.monster
-  tls: true
-  type: vless
   udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: palette.merlano.monster
-    mode: auto
-    path: /api/de7/sync
 - alpn:
   - h2
   - http/1.1
@@ -670,7 +496,57 @@ proxies:
     host: seedling.elvano.website
     mode: auto
     path: /api/de4/sync
-  name: 德国 | 优选 | 13
+  name: 德国 | 优选 | 11
+- alpn:
+  - h2
+  - http/1.1
+  client-fingerprint: edge
+  network: xhttp
+  port: 443
+  server: bayleaf.elvano.website
+  servername: bayleaf.elvano.website
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  xhttp-opts:
+    host: bayleaf.elvano.website
+    mode: auto
+    path: /api/de3/sync
+  name: 德国 | 优选 | 12
+- name: 德国 | 优选 | 13
+  server: riverstone.gerqix.online
+  port: 443
+  type: vless
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  tls: true
+  alpn:
+  - h2
+  - http/1.1
+  servername: riverstone.gerqix.online
+  client-fingerprint: edge
+  network: xhttp
+  xhttp-opts:
+    path: /api/de7/sync
+    host: riverstone.gerqix.online
+    mode: auto
+  udp: true
+- name: KZ | 优选 | 01
+  server: 85.198.90.106
+  port: 443
+  type: vless
+  uuid: 929b5d21-4124-4bc4-9fa0-fe7cef978303
+  tls: true
+  reality-opts:
+    public-key: k9BuzZPnzofDcPTaa7ROHNIc9ww2jy3tLAJ04GuKvAQ
+    short-id: c44bcdb731f12c41
+  servername: static.yandex.net
+  client-fingerprint: firefox
+  network: xhttp
+  xhttp-opts:
+    path: /api/v1/data
+    host: static.yandex.net
+  udp: true
 - alpn:
   - h2
   - http/1.1
@@ -705,37 +581,50 @@ proxies:
     mode: auto
     path: /api/de5/sync
   name: 德国 | 优选 | 15
-- client-fingerprint: firefox
-  name: 德国 | 优选 | 16
-  network: ws
+- name: 德国 | 优选 | 16
+  server: vellum.filnex.baby
   port: 443
-  server: 72.56.238.135
-  servername: parchment.merlano.monster
-  tls: true
   type: vless
-  udp: true
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  ws-opts:
-    headers:
-      Host: parchment.merlano.monster
-    path: /api/de7/stream
+  tls: true
+  alpn:
+  - h2
+  servername: rookery.moltex.click
+  client-fingerprint: firefox
+  network: grpc
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: glush.de3.v1
+  udp: true
 - alpn:
   - h2
   - http/1.1
-  client-fingerprint: ios
-  name: 德国 | 优选 | 17
+  client-fingerprint: firefox
   network: xhttp
   port: 443
-  server: fresco.merlano.monster
-  servername: fresco.merlano.monster
+  server: wildflower.elvano.website
+  servername: wildflower.elvano.website
   tls: true
   type: vless
   udp: true
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
   xhttp-opts:
-    host: fresco.merlano.monster
+    host: wildflower.elvano.website
     mode: auto
-    path: /api/de4/sync
+    path: /api/de5/sync
+  name: 德国 | 优选 | 17
+- name: KZ | 优选 | 02
+  server: 91.219.23.76
+  port: 443
+  type: vless
+  uuid: 8b1b59c8-8802-0002-a636-ffe786275594
+  tls: true
+  servername: cataloguebroker.comparecarprices.org
+  client-fingerprint: firefox
+  network: ws
+  ws-opts:
+    path: /media/ws/
+  udp: true
 - alpn:
   - h2
   - http/1.1
@@ -757,6 +646,40 @@ proxies:
   - h2
   - http/1.1
   client-fingerprint: edge
+  name: 德国 | 优选 | 19
+  network: xhttp
+  port: 443
+  server: arbor.elvano.website
+  servername: arbor.elvano.website
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  xhttp-opts:
+    host: arbor.elvano.website
+    mode: auto
+    path: /api/de7/sync
+- alpn:
+  - h2
+  - http/1.1
+  client-fingerprint: edge
+  name: 德国 | 优选 | 20
+  network: xhttp
+  port: 443
+  server: palette.merlano.monster
+  servername: palette.merlano.monster
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  xhttp-opts:
+    host: palette.merlano.monster
+    mode: auto
+    path: /api/de7/sync
+- alpn:
+  - h2
+  - http/1.1
+  client-fingerprint: edge
   network: xhttp
   port: 443
   server: gesso.merlano.monster
@@ -769,215 +692,116 @@ proxies:
     host: gesso.merlano.monster
     mode: auto
     path: /api/de5/sync
-  name: 德国 | 优选 | 19
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 01
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.54
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 02
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.72
-  type: ss
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 03
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.63
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 04
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.27
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 05
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.45
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 06
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.36
-  type: ss
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 07
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.90
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 08
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.99
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 09
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.81
-  type: ss
-  udp: true
-- name: 意大利 | 优选 | 10
-  server: 202.50.253.18
-  port: 19999
-  type: ss
-  cipher: aes-256-gcm
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  udp: true
-- name: 荷兰 | 优选 | 06
-  server: 196.196.148.63
+  name: 德国 | 优选 | 21
+- alpn:
+  - h2
+  - http/1.1
+  client-fingerprint: edge
+  network: xhttp
   port: 443
-  type: vless
-  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
+  server: heatherfield.moltex.click
+  servername: heatherfield.moltex.click
   tls: true
-  reality-opts:
-    public-key: PD8Jdlg3xB9QY--jwQjp8PFPzCS8-Oryw6-HWBcHMFU
-    short-id: d3bd772514c87d28
-  servername: 717252g.nl8.h1clayd.click
-  client-fingerprint: firefox
-  network: grpc
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: 204adda7e3da
+  type: vless
   udp: true
-
-# ==================== 策略组 (极简平铺直选，无嵌套/无空组/无自动测速) ====================
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  xhttp-opts:
+    host: heatherfield.moltex.click
+    mode: auto
+    path: /api/de6/sync
+  name: 德国 | 优选 | 22
 proxy-groups:
-  # 1. 核心选择：所有存活节点直接平铺直选，点选即用
-  - name: PROXY
-    type: select
-    include-all: true
-    proxies:
-      - DIRECT
-
-  # 2. 漏网之鱼兜底
-  - name: 漏网之鱼
-    type: select
-    proxies:
-      - PROXY
-      - DIRECT
-
-# ==================== 规则集 (Loyalsoldier/clash-rules 白名单精简版) ====================
+- name: PROXY
+  type: select
+  include-all: true
+  proxies:
+  - DIRECT
+- name: 漏网之鱼
+  type: select
+  proxies:
+  - PROXY
+  - DIRECT
 rule-providers:
   reject:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/reject.txt
     path: ./ruleset/reject.yaml
     interval: 86400
-
   icloud:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/icloud.txt
     path: ./ruleset/icloud.yaml
     interval: 86400
-
   apple:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/apple.txt
     path: ./ruleset/apple.yaml
     interval: 86400
-
   google:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/google.txt
     path: ./ruleset/google.yaml
     interval: 86400
-
   proxy:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/proxy.txt
     path: ./ruleset/proxy.yaml
     interval: 86400
-
   direct:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/direct.txt
     path: ./ruleset/direct.yaml
     interval: 86400
-
   private:
     type: http
     behavior: domain
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/private.txt
     path: ./ruleset/private.yaml
     interval: 86400
-
   telegramcidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/telegramcidr.txt
     path: ./ruleset/telegramcidr.yaml
     interval: 86400
-
   cncidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/cncidr.txt
     path: ./ruleset/cncidr.yaml
     interval: 86400
-
   lancidr:
     type: http
     behavior: ipcidr
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/lancidr.txt
     path: ./ruleset/lancidr.yaml
     interval: 86400
-
   applications:
     type: http
     behavior: classical
-    url: "https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt"
+    url: https://cdn.jsdelivr.net/gh/Loyalsoldier/clash-rules@release/applications.txt
     path: ./ruleset/applications.yaml
     interval: 86400
-
-# ==================== 分流规则 ====================
 rules:
-  # 1. 本地应用、面板与局域网直连
-  - RULE-SET,applications,DIRECT
-  - DOMAIN,clash.razord.top,DIRECT
-  - DOMAIN,yacd.haishan.me,DIRECT
-  - RULE-SET,private,DIRECT
-
-  # 2. 广告拦截
-  - RULE-SET,reject,REJECT
-
-  # 3. 苹果国内直连
-  - RULE-SET,icloud,DIRECT
-  - RULE-SET,apple,DIRECT
-
-  # 4. 明确代理域名
-  - RULE-SET,google,PROXY
-  - RULE-SET,proxy,PROXY
-
-  # 5. 明确直连域名
-  - RULE-SET,direct,DIRECT
-
-  # 6. IP 规则（加 no-resolve 避免多余 DNS 解析）
-  - RULE-SET,lancidr,DIRECT,no-resolve
-  - RULE-SET,cncidr,DIRECT,no-resolve
-  - RULE-SET,telegramcidr,PROXY,no-resolve
-  - GEOIP,LAN,DIRECT,no-resolve
-  - GEOIP,CN,DIRECT,no-resolve
-
-  # 7. 兜底
-  - MATCH,漏网之鱼
+- RULE-SET,applications,DIRECT
+- DOMAIN,clash.razord.top,DIRECT
+- DOMAIN,yacd.haishan.me,DIRECT
+- RULE-SET,private,DIRECT
+- RULE-SET,reject,REJECT
+- RULE-SET,icloud,DIRECT
+- RULE-SET,apple,DIRECT
+- RULE-SET,google,PROXY
+- RULE-SET,proxy,PROXY
+- RULE-SET,direct,DIRECT
+- RULE-SET,lancidr,DIRECT,no-resolve
+- RULE-SET,cncidr,DIRECT,no-resolve
+- RULE-SET,telegramcidr,PROXY,no-resolve
+- GEOIP,LAN,DIRECT,no-resolve
+- GEOIP,CN,DIRECT,no-resolve
+- MATCH,漏网之鱼
