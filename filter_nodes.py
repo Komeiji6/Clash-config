@@ -104,7 +104,7 @@ GIT_SSH_KEY = "/root/.ssh/id_ed25519"
 
 # 端口与并发规划
 STAGE1_API_PORT = 19999
-STAGE1_CONCURRENCY = 12         # 初筛并发降至 25（完美适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
+STAGE1_CONCURRENCY = 20         # 初筛并发降至 25（完美适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
 STAGE2_API_PORT = 19090
 STAGE2_BASE_PORT = 18080
 STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路无锁)
