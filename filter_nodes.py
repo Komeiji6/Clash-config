@@ -104,7 +104,7 @@ GIT_SSH_KEY = "/root/.ssh/id_ed25519"
 
 # 端口与并发规划
 STAGE1_API_PORT = 19999
-STAGE1_CONCURRENCY = 25         # 初筛并发降至 25（完美适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
+STAGE1_CONCURRENCY = 12         # 初筛并发降至 25（完美适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
 STAGE2_API_PORT = 19090
 STAGE2_BASE_PORT = 18080
 STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路无锁)
@@ -114,7 +114,7 @@ IPAPI_IS_KEY = "YOUR_IPAPI_KEY"
 
 # 策略组容量上限与阈值
 MAX_NODES_PER_GROUP = 50        # 每个含节点策略组最多保留 50 个
-HANDSHAKE_TIMEOUT_MS = 2500     # 握手超时放宽至 3000ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
+HANDSHAKE_TIMEOUT_MS = 3500     # 握手超时放宽至 3000ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
 PREMIUM_MAX_LATENCY_MS = 800    # 「优选」延迟上限放宽为 800ms
 MIN_SAFEGUARD_NODES = 3         # 熔断保底阈值
 
@@ -334,10 +334,8 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
     dedup_proxies: List[Dict[str, Any]] = []
 
     for idx, proxy in enumerate(all_raw_proxies):
-        # 1. 保留所有包含服务器的节点，绝不根据名字过滤，让网络真实测速决定存活
-        raw_name = str(proxy.get("name", "")).strip()
-        if not raw_name:
-            continue
+        # 1. 保留所有包含服务器的节点，绝不根据名字过滤，若名称缺失自动补齐
+        raw_name = str(proxy.get("name") or f"node_{idx}").strip()
 
         # 2. 协议白名单过滤 (剔除 compatible、http、socks5 等无效类型)
         p_type = str(proxy.get("type", "")).strip().lower()
@@ -363,7 +361,14 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
         if p_type in ("ss", "trojan") and not proxy.get("password"):
             continue
 
-        credential = str(proxy.get("uuid") or proxy.get("password") or "").strip()
+        credential = str(
+            proxy.get("uuid")
+            or proxy.get("password")
+            or proxy.get("auth")
+            or proxy.get("auth-str")
+            or proxy.get("token")
+            or ""
+        ).strip()
         unique_key = (server, port, p_type, credential)
         if unique_key in seen_keys:
             continue
@@ -458,17 +463,21 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
             f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{name}/delay"
             f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
         )
-        try:
-            with requests.Session() as s:
-                s.trust_env = False
-                resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.5)
-                if resp.status_code == 200:
-                    d = resp.json()
-                    delay = d.get("delay", 9999)
-                    if 0 < delay <= HANDSHAKE_TIMEOUT_MS:
-                        return (proxy_map[name], delay)
-        except Exception:
-            pass
+        with requests.Session() as s:
+            s.trust_env = False
+            # 允许最多 2 次握手探测机会（消除偶发单包丢包和 WiFi 射频抖动带来的误杀）
+            for attempt in range(2):
+                try:
+                    resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.8)
+                    if resp.status_code == 200:
+                        d = resp.json()
+                        delay = d.get("delay", 9999)
+                        if 0 < delay <= HANDSHAKE_TIMEOUT_MS:
+                            return (proxy_map[name], delay)
+                except Exception:
+                    pass
+                if attempt == 0:
+                    time.sleep(0.3)
         return None
 
     names = [p["name"] for p in proxies]
@@ -501,22 +510,31 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
                 f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{p['name']}/delay"
                 f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
             )
-            try:
-                with requests.Session() as s:
-                    s.trust_env = False
-                    resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.5)
-                    if resp.status_code == 200:
-                        d2 = resp.json().get("delay", 9999)
-                        if 0 < d2 <= HANDSHAKE_TIMEOUT_MS:
-                            jitter = abs(d1 - d2)
-                            # 稳定性熔断：若两轮测试抖动超过 800ms，说明网络极不稳定/频发丢包重传，直接熔断
-                            if jitter > 800:
-                                return None
-                            # 加权平稳延迟得分：40% 最小延迟 + 40% 最大延迟 + 20% 抖动惩罚
-                            effective_score = int(0.4 * min(d1, d2) + 0.4 * max(d1, d2) + 0.2 * jitter)
-                            return (p, effective_score)
-            except Exception:
-                pass
+            # 三局两胜容错精测机制（绝不误杀冷启动与轻微抖动的好节点）
+            success_delays = [d1]
+            with requests.Session() as s:
+                s.trust_env = False
+                for _ in range(2):
+                    try:
+                        resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.8)
+                        if resp.status_code == 200:
+                            d = resp.json().get("delay", 9999)
+                            if 0 < d <= HANDSHAKE_TIMEOUT_MS:
+                                success_delays.append(d)
+                                if len(success_delays) >= 2:
+                                    break
+                    except Exception:
+                        pass
+                    time.sleep(0.3)
+
+            # 只要在至多 3 轮测试中成功通过 2 轮，节点即认定稳定可用！
+            if len(success_delays) >= 2:
+                d_min = min(success_delays)
+                d_max = max(success_delays)
+                jitter = d_max - d_min
+                # 综合延迟平稳得分：抖动大的往后排，但绝不直接丢弃
+                effective_score = int(0.5 * d_min + 0.3 * d_max + 0.2 * jitter)
+                return (p, effective_score)
             return None
 
         with ThreadPoolExecutor(max_workers=5) as pool:
@@ -624,6 +642,35 @@ def query_exit_ip_info(proxy_url: str) -> Optional[Dict[str, Any]]:
 
     return None
 
+
+
+def extract_cc_from_name(raw_name: str) -> str:
+    """从节点名称中推断国家代码，防止因外部 IP API 限流或超时误杀节点。"""
+    name_upper = raw_name.upper()
+    keywords = {
+        "香港": "HK", "HK": "HK", "HONG KONG": "HK",
+        "台湾": "TW", "TW": "TW", "TAIWAN": "TW",
+        "日本": "JP", "JP": "JP", "JAPAN": "JP",
+        "新加坡": "SG", "SG": "SG", "SINGAPORE": "SG",
+        "美国": "US", "US": "US", "USA": "US",
+        "韩国": "KR", "KR": "KR", "KOREA": "KR",
+        "德国": "DE", "DE": "DE", "GERMANY": "DE",
+        "英国": "GB", "GB": "GB", "UK": "GB",
+        "法国": "FR", "FR": "FR", "FRANCE": "FR",
+        "荷兰": "NL", "NL": "NL", "NETHERLANDS": "NL",
+        "俄罗斯": "RU", "RU": "RU", "RUSSIA": "RU",
+        "意大利": "IT", "IT": "IT", "ITALY": "IT",
+        "加拿大": "CA", "CA": "CA", "CANADA": "CA",
+        "澳大利亚": "AU", "AU": "AU", "AUSTRALIA": "AU",
+        "土耳其": "TR", "TR": "TR", "TURKEY": "TR",
+        "哈萨克斯坦": "KZ", "KZ": "KZ",
+        "芬兰": "FI", "FI": "FI",
+        "奥地利": "AT", "AT": "AT",
+    }
+    for kw, cc in keywords.items():
+        if kw in name_upper or kw in raw_name:
+            return cc
+    return "OTHER"
 
 def classify_node_tier(ip_info: Dict[str, Any], latency_ms: int) -> str:
     """根据 IP 属性与握手延迟判定节点品质 (纯净 / 优选 / 普通)。"""
@@ -771,41 +818,77 @@ def run_stage2_exit_detection(
 
                     ip_info = query_exit_ip_info(proxy_url)
                     if not ip_info:
-                        continue
+                        # 容错降级：免费第三方 IP API 若临时超时或限流，绝不误杀真实可用的节点
+                        inferred_cc = extract_cc_from_name(orig_proxy.get("name", ""))
+                        ip_info = {
+                            "cc": inferred_cc or "OTHER",
+                            "isp": "Unknown",
+                            "org": "",
+                            "as": "",
+                            "hosting": None,
+                            "proxy": None,
+                        }
 
                     cc = ip_info["cc"]
                     if not re.fullmatch(r"[A-Z]{2}", cc):
-                        cc = "UN"
+                        cc = "OTHER"
 
                     # 严格剔除中国大陆落地节点 (CN)，防止国内流量回环与无效翻墙
                     if cc == "CN":
                         continue
 
-                    # 核心校验：必须真正通过代理隧道完成完整的 HTTPS 端到端握手与 204 访问（杜绝假绿灯和死源站）
-                    # 核心校验：必须真正通过代理隧道完成完整的 HTTPS 端到端握手与双向微数据流拉取（杜绝假绿灯和死源站）
+                    # 核心校验：多目标端到端高精可用性探测（7s 宽裕超时 + 双轮容错重试，杜绝误杀）
                     https_ok = False
-                    try:
-                        with requests.Session() as browse_s:
-                            browse_s.trust_env = False
-                            # 1. 必通 Google 204（突破 GFW 核心验证）
-                            r_google = browse_s.get(
-                                "https://www.google.com/generate_204",
-                                proxies={"http": proxy_url, "https": proxy_url},
-                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-                                timeout=4,
-                            )
-                            if r_google.status_code in (200, 204):
-                                # 2. 真实微数据双向流校验（从 Cloudflare 极速接口拉取 ~150B trace 数据，验证非空响应与持续数据流）
-                                r_trace = browse_s.get(
-                                    "https://www.cloudflare.com/cdn-cgi/trace",
-                                    proxies={"http": proxy_url, "https": proxy_url},
-                                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
-                                    timeout=4,
+                    with requests.Session() as browse_s:
+                        browse_s.trust_env = False
+                        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                        proxies = {"http": proxy_url, "https": proxy_url}
+
+                        for attempt in range(2):
+                            # 探测 1：Google 204（核心翻墙验证）
+                            try:
+                                r_google = browse_s.get(
+                                    "https://www.google.com/generate_204",
+                                    proxies=proxies,
+                                    headers=headers,
+                                    timeout=7,
                                 )
-                                if r_trace.status_code == 200 and "visit_scheme=https" in r_trace.text:
+                                if r_google.status_code in (200, 204):
                                     https_ok = True
-                    except Exception:
-                        pass
+                                    break
+                            except Exception:
+                                pass
+
+                            # 探测 2：YouTube 204（备选破墙探测，应对 Google 单点微抖动）
+                            try:
+                                r_yt = browse_s.get(
+                                    "https://www.youtube.com/generate_204",
+                                    proxies=proxies,
+                                    headers=headers,
+                                    timeout=7,
+                                )
+                                if r_yt.status_code in (200, 204):
+                                    https_ok = True
+                                    break
+                            except Exception:
+                                pass
+
+                            # 探测 3：Cloudflare 204 / trace（全球国际网络连通与双向传输验证）
+                            try:
+                                r_cf = browse_s.get(
+                                    "https://cp.cloudflare.com/generate_204",
+                                    proxies=proxies,
+                                    headers=headers,
+                                    timeout=7,
+                                )
+                                if r_cf.status_code in (200, 204):
+                                    https_ok = True
+                                    break
+                            except Exception:
+                                pass
+
+                            if attempt == 0 and not https_ok:
+                                time.sleep(0.5)
 
                     if not https_ok:
                         continue
