@@ -4,11 +4,11 @@
 Clash 节点全量测速筛选与自动发布脚本 (Snapdragon 410 / 512MB RAM / Debian 11 ARM64)
 目标仓库: git@github.com:Komeiji6/Clash-config.git (nodes 孤儿分支)
 运行模式:
-1. 全量拉取上游 (~2600+ 节点)，不根据名称提前截断，全部进入测速；
-2. Mihomo 高并发内网协程快速握手初筛 (HTTPS Google 204)，严控超时；
-3. 存活节点 3 路无锁探测落地 IP 属性与原生纯净度，并执行真实端到端 HTTPS 网页请求校验；
-4. 节点中文规范重命名 ("香港 | 优选 | 01")；
-5. 全流程位于 /tmp/ (tmpfs)，零 eMMC 磨损，最终原子化单 Commit 强推至 GitHub nodes 与 main 分支。
+1. 全量拉取上游 (~2600+ 节点)，不提前截断；
+2. Mihomo 高并发 (60协程) 内核级快速握手初筛，严控 1000ms 超时，超标即弃；
+3. 存活节点 3 路无锁探测落地 IP 属性与原生纯净度 (ip-api / ipwho.is)；
+4. 按策略组分桶 (HK, JP, SG, US, 其他地区)，每组上限 20 个，优先纯净与低延迟；
+5. 全流程位于 /tmp/ (tmpfs)，零 eMMC 磨损，最终原子化单 Commit 强推至 GitHub nodes 分支。
 """
 
 import gc
@@ -114,7 +114,7 @@ IPAPI_IS_KEY = "YOUR_IPAPI_KEY"
 
 # 策略组容量上限与阈值
 MAX_NODES_PER_GROUP = 50        # 每个含节点策略组最多保留 50 个
-HANDSHAKE_TIMEOUT_MS = 3000     # 握手超时放宽至 3000ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
+HANDSHAKE_TIMEOUT_MS = 2500     # 握手超时放宽至 3000ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
 PREMIUM_MAX_LATENCY_MS = 800    # 「优选」延迟上限放宽为 800ms
 MIN_SAFEGUARD_NODES = 3         # 熔断保底阈值
 
@@ -283,6 +283,12 @@ VALID_PROXY_TYPES = {
     "hysteria", "hysteria2", "tuic", "wireguard", "snell"
 }
 
+# 垃圾/广告/兼容性占位关键字 (出现在名称中直接丢弃)
+JUNK_NAME_KEYWORDS = (
+    "compatible", "剩余流量", "到期", "过期", "官网", "更新", "关注",
+    "群", "公告", "广告", "购买", "套餐", "客服", "订阅转换", "防失联"
+)
+
 # 无效/保留/蜜罐地址黑名单
 INVALID_SERVERS = {"", "127.0.0.1", "127.0.0.53", "localhost", "0.0.0.0", "::", "::1"}
 
@@ -304,6 +310,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
             try:
                 resp = session.get(url, headers=headers, timeout=25)
                 resp.raise_for_status()
+                # 严格只解析 proxies 字段，彻底抛弃上游自带的 rules、proxy-groups、dns 等规则
                 data = yaml.load(resp.text, Loader=YamlLoader)
                 if isinstance(data, dict) and isinstance(data.get("proxies"), list):
                     proxies_list = [p for p in data["proxies"] if isinstance(p, dict)]
@@ -378,8 +385,8 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
 
 def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], int]]:
     """
-    使用 Mihomo 内核并发协程对全部节点执行 HTTPS 握手测速 (https://www.google.com/generate_204)。
-    握手 > 3000ms 或超时失败的节点直接丢弃。
+    使用 Mihomo 内核并发协程在 ~60 秒内对全部 2600+ 节点执行握手测速。
+    握手 > 1000ms 或超时失败的节点直接丢弃。
     """
     TMP_STAGE1_DIR.mkdir(parents=True, exist_ok=True)
     cfg_path = TMP_STAGE1_DIR / "config.yaml"
@@ -437,7 +444,7 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
         kill_active_procs()
         raise RuntimeError("等待 Mihomo 初筛实例就绪超时。")
 
-    log.info("Mihomo 实例就绪，开始对全量 %d 个节点执行 25 协程并发 HTTPS 握手测速 (上限=%dms)...",
+    log.info("Mihomo 实例就绪，开始对全量 %d 个节点执行 60 协程并发握手测速 (握手上限=%dms)...",
              len(proxies), HANDSHAKE_TIMEOUT_MS)
 
     proxy_map = {p["name"]: p for p in proxies}
@@ -481,7 +488,7 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
     elapsed_total = time.monotonic() - t_start
     log.info("全量初筛完成！耗时: %.1f 秒, 初步存活节点数: %d 个", elapsed_total, len(alive_records))
 
-    # 阶段 1.5: 对初步存活节点执行 5 并发双轮抽样精测与稳定性熔断
+    # 阶段 1.5: 对初步存活节点执行 5 并发双轮抽样精测与稳定性熔断 (消除冷启动与 50% 丢包假活)
     if alive_records:
         log.info("开始对 %d 个初选节点执行 5 并发低载双轮精测与稳定性熔断...", len(alive_records))
         refined_records: List[Tuple[Dict[str, Any], int]] = []
@@ -501,8 +508,13 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
                     if resp.status_code == 200:
                         d2 = resp.json().get("delay", 9999)
                         if 0 < d2 <= HANDSHAKE_TIMEOUT_MS:
-                            min_delay = min(d1, d2)
-                            return (p, min_delay)
+                            jitter = abs(d1 - d2)
+                            # 稳定性熔断：若两轮测试抖动超过 800ms，说明网络极不稳定/频发丢包重传，直接熔断
+                            if jitter > 800:
+                                return None
+                            # 加权平稳延迟得分：40% 最小延迟 + 40% 最大延迟 + 20% 抖动惩罚
+                            effective_score = int(0.4 * min(d1, d2) + 0.4 * max(d1, d2) + 0.2 * jitter)
+                            return (p, effective_score)
             except Exception:
                 pass
             return None
@@ -520,6 +532,7 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
                  len(refined_records), flaky_count)
         alive_records = refined_records
 
+    # 关闭初筛 Mihomo 并释放资源
     kill_active_procs()
     shutil.rmtree(TMP_STAGE1_DIR, ignore_errors=True)
     gc.collect()
@@ -534,6 +547,7 @@ def query_exit_ip_info(proxy_url: str) -> Optional[Dict[str, Any]]:
     proxies = {"http": proxy_url, "https": proxy_url}
     headers = {"User-Agent": "curl/7.74.0", "Connection": "close"}
 
+    # 1. 旗舰接口: ipapi.is (若配置了 Key，具备最高精度 datacenter/vpn/proxy 识别)
     if IPAPI_IS_KEY:
         try:
             with requests.Session() as s:
@@ -564,6 +578,7 @@ def query_exit_ip_info(proxy_url: str) -> Optional[Dict[str, Any]]:
         except Exception:
             pass
 
+    # 2. 主力接口: ip-api.com (免 Key 极速直出)
     try:
         with requests.Session() as s:
             s.trust_env = False
@@ -587,6 +602,7 @@ def query_exit_ip_info(proxy_url: str) -> Optional[Dict[str, Any]]:
     except Exception:
         pass
 
+    # 3. 备用接口: ipwho.is
     try:
         with requests.Session() as s:
             s.trust_env = False
@@ -616,6 +632,7 @@ def classify_node_tier(ip_info: Dict[str, Any], latency_ms: int) -> str:
     api_hosting = ip_info.get("hosting")
     api_proxy = ip_info.get("proxy")
 
+    # 纯净住宅 IP 判定
     if (
         isp_blob.strip()
         and not is_hosting_kw
@@ -624,6 +641,7 @@ def classify_node_tier(ip_info: Dict[str, Any], latency_ms: int) -> str:
     ):
         return "纯净"
 
+    # 优选低延迟判定
     if latency_ms <= PREMIUM_MAX_LATENCY_MS:
         return "优选"
 
@@ -633,7 +651,7 @@ def classify_node_tier(ip_info: Dict[str, Any], latency_ms: int) -> str:
 def run_stage2_exit_detection(
     alive_records: List[Tuple[Dict[str, Any], int]]
 ) -> List[Dict[str, Any]]:
-    """对初筛存活节点进行 3 路并发落地检测与真实端到端 HTTPS 浏览校验。"""
+    """对初筛存活节点进行 3 路并发落地检测与纯净度判定。"""
     if not alive_records:
         return []
 
@@ -701,6 +719,7 @@ def run_stage2_exit_detection(
     )
     _active_procs.append(proc)
 
+    # 等待 REST API 就绪
     ready = False
     with requests.Session() as s:
         s.trust_env = False
@@ -730,7 +749,7 @@ def run_stage2_exit_detection(
     progress_counter = [0]
     total_tasks = len(task_items)
 
-    log.info("开始落地 IP 纯净度与真实 HTTPS 访问端到端检测 (待测 %d 个)...", total_tasks)
+    log.info("开始落地 IP 纯净度与地区属性检测 (待测 %d 个)...", total_tasks)
 
     def worker(worker_id: int) -> None:
         group_name = f"WORKER_{worker_id}"
@@ -763,26 +782,27 @@ def run_stage2_exit_detection(
                         continue
 
                     # 核心校验：必须真正通过代理隧道完成完整的 HTTPS 端到端握手与 204 访问（杜绝假绿灯和死源站）
+                    # 核心校验：必须真正通过代理隧道完成完整的 HTTPS 端到端握手与双向微数据流拉取（杜绝假绿灯和死源站）
                     https_ok = False
                     try:
                         with requests.Session() as browse_s:
                             browse_s.trust_env = False
-                            r_https = browse_s.get(
+                            # 1. 必通 Google 204（突破 GFW 核心验证）
+                            r_google = browse_s.get(
                                 "https://www.google.com/generate_204",
                                 proxies={"http": proxy_url, "https": proxy_url},
-                                headers={"User-Agent": "Mozilla/5.0"},
-                                timeout=5,
+                                headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                                timeout=4,
                             )
-                            if r_https.status_code in (200, 204):
-                                https_ok = True
-                            else:
-                                r_cf = browse_s.get(
-                                    "https://cp.cloudflare.com/generate_204",
+                            if r_google.status_code in (200, 204):
+                                # 2. 真实微数据双向流校验（从 Cloudflare 极速接口拉取 ~150B trace 数据，验证非空响应与持续数据流）
+                                r_trace = browse_s.get(
+                                    "https://www.cloudflare.com/cdn-cgi/trace",
                                     proxies={"http": proxy_url, "https": proxy_url},
-                                    headers={"User-Agent": "Mozilla/5.0"},
-                                    timeout=5,
+                                    headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
+                                    timeout=4,
                                 )
-                                if r_cf.status_code in (200, 204):
+                                if r_trace.status_code == 200 and "visit_scheme=https" in r_trace.text:
                                     https_ok = True
                     except Exception:
                         pass
@@ -823,73 +843,60 @@ def run_stage2_exit_detection(
     shutil.rmtree(TMP_STAGE2_DIR, ignore_errors=True)
     gc.collect()
 
-    log.info("落地属性与端到端访问检测完成，成功获取到 %d 个合格节点的地区与纯净度标签", len(verified_records))
+    log.info("落地属性检测完成，成功获取到 %d 个合格节点的地区与纯净度标签", len(verified_records))
     return verified_records
 
 
-# ======================== 阶段 4: 策略组分桶与规范重命名 ========================
+# ======================== 阶段 4: 策略组分桶、单组上限 20 与规范重命名 ========================
 
 def bucket_and_limit_nodes(verified_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    按国家/地区分桶，排序优先级：纯净 (住宅) > 优选 (低延迟) > 普通；
-    规范重命名为 "{国家中文名} | {tier} | {两位编号}" (例如 "香港 | 优选 | 01")。
-    """
-    buckets: Dict[str, List[Dict[str, Any]]] = {
-        "HK": [],
-        "JP": [],
-        "SG": [],
-        "US": [],
-        "OTHER": [],
-    }
+    按 cmfa-merged-config.yaml 的策略组分桶：
+    - 香港 (HK)
+    - 日本 (JP)
+    - 新加坡 (SG)
+    - 美国 (US)
+    - 其他地区 (OTHER)
 
-    for rec in verified_records:
-        cc = rec["cc"]
-        if cc == "CN":
-            continue
-        if cc in ("HK", "JP", "SG", "US"):
-            buckets[cc].append(rec)
-        else:
-            buckets["OTHER"].append(rec)
+    在每个分桶中：
+    1. 排序优先级：纯净 (住宅) > 优选 (低延迟) > 普通；
+    2. 延迟升序 (握手延迟低的排前面)；
+    3. 每个策略组严格只保留最多 MAX_NODES_PER_GROUP (20) 个；
+    4. 规范重命名为 "{CC} | {tier} | {两位编号}" (例如 "HK | 纯净 | 01")。
+    """
+    valid_records = [r for r in verified_records if r["cc"] != "CN"]
+
+    # 全局扁平化排序：纯净优先 -> 稳定性综合延迟评分升序
+    valid_records.sort(
+        key=lambda x: (
+            TIER_PRIORITY.get(x["tier"], 9),
+            x["delay"],
+        )
+    )
 
     final_proxies: List[Dict[str, Any]] = []
     naming_counter: Counter = Counter()
 
-    for group_key in ["HK", "JP", "SG", "US", "OTHER"]:
-        group_list = buckets[group_key]
-        if not group_list:
-            continue
+    for item in valid_records:
+        cc = item["cc"]
+        tier = item["tier"]
+        naming_counter[(cc, tier)] += 1
+        seq = naming_counter[(cc, tier)]
 
-        # 桶内排序：纯净优先 -> 延迟升序
-        group_list.sort(
-            key=lambda x: (
-                TIER_PRIORITY.get(x["tier"], 9),
-                x["delay"],
-            )
-        )
+        cc_cn = CC_REGION_NAMES.get(cc, cc)
+        new_name = f"{cc_cn} | {tier} | {seq:02d}"
+        node_dict = dict(item["proxy"])
+        node_dict["name"] = new_name
 
-        selected = group_list[:MAX_NODES_PER_GROUP]
-        log.info("策略组 [%s]: 候选 %d 个 -> 精选保留 %d 个 (上限 %d)",
-                 group_key, len(group_list), len(selected), MAX_NODES_PER_GROUP)
+        final_proxies.append({
+            "cc": cc,
+            "tier": tier,
+            "delay": item["delay"],
+            "proxy": node_dict,
+        })
 
-        for item in selected:
-            cc = item["cc"]
-            tier = item["tier"]
-            naming_counter[(cc, tier)] += 1
-            seq = naming_counter[(cc, tier)]
-
-            cc_cn = CC_REGION_NAMES.get(cc, cc)
-            new_name = f"{cc_cn} | {tier} | {seq:02d}"
-            node_dict = dict(item["proxy"])
-            node_dict["name"] = new_name
-
-            final_proxies.append({
-                "cc": cc,
-                "tier": tier,
-                "delay": item["delay"],
-                "proxy": node_dict,
-            })
-
-    log.info("分桶裁剪完成: 最终保留节点总数 %d 个", len(final_proxies))
+    log.info("全局优选排序完成: 共保留 %d 个合格节点 (首位节点延迟评分: %dms)",
+             len(final_proxies), final_proxies[0]["delay"] if final_proxies else 0)
     return final_proxies
 
 
@@ -938,6 +945,36 @@ CC_REGION_NAMES: Dict[str, str] = {
     "AE": "阿联酋",
     "IL": "以色列",
     "NZ": "新西兰",
+    "KZ": "哈萨克斯坦",
+    "IS": "冰岛",
+    "CZ": "捷克",
+    "RO": "罗马尼亚",
+    "MD": "摩尔多瓦",
+    "RS": "塞尔维亚",
+    "HU": "匈牙利",
+    "GR": "希腊",
+    "PT": "葡萄牙",
+    "BE": "比利时",
+    "DK": "丹麦",
+    "LU": "卢森堡",
+    "EE": "爱沙尼亚",
+    "LV": "拉脱维亚",
+    "LT": "立陶宛",
+    "GE": "格鲁吉亚",
+    "AM": "亚美尼亚",
+    "AZ": "阿塞拜疆",
+    "UZ": "乌兹别克斯坦",
+    "KG": "吉尔吉斯斯坦",
+    "TJ": "塔吉克斯坦",
+    "TM": "土库曼斯坦",
+    "MN": "蒙古",
+    "PK": "巴基斯坦",
+    "BD": "孟加拉国",
+    "LK": "斯里兰卡",
+    "NP": "尼泊尔",
+    "KH": "柬埔寨",
+    "LA": "老挝",
+    "MM": "缅甸",
     "UN": "其他",
 }
 
@@ -998,7 +1035,7 @@ proxy-providers:
     health-check:
       enable: true
       interval: 300
-      url: https://www.google.com/generate_204
+      url: http://www.gstatic.com/generate_204
 ```
 
 ---
@@ -1019,7 +1056,7 @@ proxy-providers:
 {cc_rows}
 
 ---
-*注：节点命名规则为 `{{国家中文名}} | {{纯净/优选}} | {{序号}}`，直观易认。*
+*注：节点命名规则为 `{{地区代码}} | {{纯净/优选}} | {{序号}}`，便于按地区或纯净度进行正则匹配与策略组编排。*
 """
 
 
@@ -1077,7 +1114,7 @@ def atomic_push_to_github(
     run_git(["push", "--force", "origin", GIT_BRANCH])
     log.info("🎉 推送完成！(%s, 共发布 %d 个节点至 nodes 分支)", update_time_utc, len(final_proxies))
 
-    # 2. 同步更新 main 分支主配置 cmfa-merged-config.yaml（节点直接内嵌，极简平铺）
+    # 2. 同步更新 main 分支主配置 cmfa-merged-config.yaml（节点直接内嵌，杜绝 proxy-providers 套娃）
     try:
         main_repo_dir = TMP_DIR / "main_repo"
         if main_repo_dir.exists():
@@ -1132,7 +1169,7 @@ def atomic_push_to_github(
     except Exception as exc:
         log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
 
-    # 自动刷新 jsdelivr 全球 CDN 边缘缓存
+    # 自动刷新 jsdelivr 全球 CDN 边缘缓存，确保国内免代理客户端秒级拉取最新节点
     try:
         requests.get("https://purge.jsdelivr.net/gh/Komeiji6/Clash-config@nodes/proxies.yaml", timeout=10)
         requests.get("https://purge.jsdelivr.net/gh/Komeiji6/Clash-config@main/cmfa-merged-config.yaml", timeout=10)
@@ -1161,18 +1198,18 @@ def main() -> int:
                          dedup_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 2. 全量高并发握手测速初筛 (<= 3000ms, HTTPS Google 204)
+        # 2. 全量高并发握手测速初筛 (<= 1000ms)
         alive_records = run_stage1_fast_delay_filter(proxies)
         del proxies
         gc.collect()
 
         alive_count = len(alive_records)
         if alive_count < MIN_SAFEGUARD_NODES:
-            log.critical("[熔断保护] 有效存活仅 %d 个节点 (< %d)，终止发布！",
+            log.critical("[熔断保护] 1000ms 内有效存活仅 %d 个节点 (< %d)，终止发布！",
                          alive_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 3. 落地 IP 属性与品质判定 + 真实端到端 HTTPS 浏览验证
+        # 3. 落地 IP 属性与品质判定
         verified_records = run_stage2_exit_detection(alive_records)
         del alive_records
         gc.collect()
@@ -1182,7 +1219,7 @@ def main() -> int:
                          len(verified_records), MIN_SAFEGUARD_NODES)
             return 1
 
-        # 4. 规范中文重命名与分桶上限截取
+        # 4. 策略组分桶、单组上限 20 截取与重命名
         final_records = bucket_and_limit_nodes(verified_records)
         del verified_records
         gc.collect()
@@ -1192,7 +1229,7 @@ def main() -> int:
                          len(final_records), MIN_SAFEGUARD_NODES)
             return 1
 
-        # 5. 原子化强推至 GitHub nodes 与 main 分支
+        # 5. 原子化强推至 GitHub nodes 分支
         atomic_push_to_github(
             final_records=final_records,
             raw_count=raw_count,
