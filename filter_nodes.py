@@ -326,6 +326,19 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int]:
 
     session.close()
 
+    # 核心保障：自动回流上一轮成功入库的历史存活节点（彻底解决“上一次明明好用的节点更新后突然消失”的问题）
+    HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
+    if HISTORICAL_POOL_FILE.exists():
+        try:
+            with HISTORICAL_POOL_FILE.open("r", encoding="utf-8") as f:
+                saved_data = yaml.load(f, Loader=YamlLoader)
+                if isinstance(saved_data, dict) and isinstance(saved_data.get("proxies"), list):
+                    saved_proxies = [p for p in saved_data["proxies"] if isinstance(p, dict)]
+                    all_raw_proxies.extend(saved_proxies)
+                    log.info("成功回流上一轮在用存活节点: %d 个 (进入保活复测队列)", len(saved_proxies))
+        except Exception as exc:
+            log.warning("读取历史存活节点池异常: %s", exc)
+
     if not all_raw_proxies:
         raise RuntimeError("所有上游镜像源均拉取失败，终止任务。")
 
@@ -1255,6 +1268,14 @@ def atomic_push_to_github(
             shutil.rmtree(main_repo_dir, ignore_errors=True)
     except Exception as exc:
         log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
+
+    # 保存当前通过全量验证的高质量节点至本地历史保活池，供下次测速自动回流
+    try:
+        HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
+        dump_proxies_yaml(HISTORICAL_POOL_FILE, final_proxies)
+        log.info("已将本轮 %d 个合格存活节点存档至本地历史保活池。", len(final_proxies))
+    except Exception as exc:
+        log.warning("存档历史存活节点异常: %s", exc)
 
     # 自动刷新 jsdelivr 全球 CDN 边缘缓存，确保国内免代理客户端秒级拉取最新节点
     try:
