@@ -1015,6 +1015,10 @@ def build_readme(
 * **CDN 镜像（GitHub 直连受阻时备用）**：
   ```text
   https://cdn.jsdelivr.net/gh/Komeiji6/Clash-config@nodes/proxies.yaml
+  `
+* **国内反代镜像（校园网/直连受阻备用）**：
+  `	ext
+  https://ghproxy.net/https://raw.githubusercontent.com/Komeiji6/Clash-config/nodes/proxies.yaml
   ```
 
 > 💡 **需要开箱即用完整分流配置？** 请访问 [main 分支主页](https://github.com/Komeiji6/Clash-config) 获取内置精细规则分流的完整主配置。
@@ -1056,7 +1060,7 @@ proxy-providers:
 {cc_rows}
 
 ---
-*注：节点命名规则为 `{{地区代码}} | {{纯净/优选}} | {{序号}}`，便于按地区或纯净度进行正则匹配与策略组编排。*
+*注：节点命名规则为 `{{地区中文名}} | {{纯净/优选}} | {{序号}}`，已按真实综合延迟平稳度全局升序排列。*
 """
 
 
