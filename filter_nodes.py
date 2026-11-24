@@ -138,8 +138,20 @@ STAGE2_API_PORT = 19090
 STAGE2_BASE_PORT = 18080
 STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路无锁)
 
-# IP 纯净度检测 API Key (ipapi.is 专属)
-IPAPI_IS_KEY = "YOUR_IPAPI_KEY"
+# 本地机密配置文件 (仅保存在棒子本地 /opt/clash-filter/secrets.json，严禁提交至公共仓库)
+SECRETS_FILE = Path("/opt/clash-filter/secrets.json")
+
+def _load_local_secrets() -> Dict[str, str]:
+    if SECRETS_FILE.exists():
+        try:
+            with SECRETS_FILE.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+_SECRETS = _load_local_secrets()
+IPAPI_IS_KEY = _SECRETS.get("ipapi_is_key", os.getenv("IPAPI_IS_KEY", ""))
 
 # 策略组容量上限与阈值
 MAX_NODES_PER_GROUP = 50        # 每个含节点策略组最多保留 50 个
@@ -267,16 +279,21 @@ def ensure_system_time_and_network() -> None:
         pass
 
     log.info("互联网未连通或受限于校园网认证网关，尝试执行校园网心跳登录...")
-    auth_url = (
-        "http://10.100.61.3/drcom/login?"
-        "callback=dr1003&DDDDD=YOUR_USERNAME&upass=YOUR_PASSWORD&0MKKey=123456"
-    )
-    try:
-        requests.get(auth_url, timeout=5)
-        time.sleep(2)
-        log.info("校园网认证心跳发送完毕，网络已恢复就绪。")
-    except Exception as e:
-        log.warning("发送校园网认证心跳异常: %s", e)
+    acc = _SECRETS.get("campus_account", "")
+    pwd = _SECRETS.get("campus_password", "")
+    if acc and pwd:
+        auth_url = (
+            f"http://10.100.61.3/drcom/login?"
+            f"callback=dr1003&DDDDD={urllib.parse.quote(acc)}&upass={urllib.parse.quote(pwd)}&0MKKey=123456"
+        )
+        try:
+            requests.get(auth_url, timeout=5)
+            time.sleep(2)
+            log.info("校园网认证心跳发送完毕，网络已恢复就绪。")
+        except Exception as e:
+            log.warning("发送校园网认证心跳异常: %s", e)
+    else:
+        log.info("未配置本地校园网认证账号，跳过自动登录。")
 
 
 # ======================== 工具函数 ========================
