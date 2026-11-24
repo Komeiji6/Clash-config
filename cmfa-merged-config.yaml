@@ -72,19 +72,6 @@ dns:
     - 240.0.0.0/4
     - 0.0.0.0/32
 proxies:
-- client-fingerprint: firefox
-  name: 德国 | 纯净 | 01
-  network: xhttp
-  port: 443
-  server: 193.160.208.240
-  servername: 193.160.208.240
-  tls: true
-  type: vless
-  udp: true
-  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
-  xhttp-opts:
-    mode: auto
-    path: /assets/twru01/
 - name: 英国 | 纯净 | 01
   server: 196.196.208.22
   port: 443
@@ -102,20 +89,65 @@ proxies:
     host: 9303d6x.fi-p1b.h1clayd.click
     mode: auto
   udp: true
-- type: hysteria
-  name: 美国 | 优选 | 01
-  server: 38.6.222.131
-  port: 11008
-  password: dongtaiwang.com
+- name: 德国 | 纯净 | 01
+  server: 13.141.36.75
+  port: 443
+  type: vless
+  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
   tls: true
-  servername: bing.com
-  sni: bing.com
+  reality-opts:
+    public-key: jhVdP7NFUaEXGfrmOqJlMCHTvqn3fymbzPfPT6NO4i0
+    short-id: f72d4a2c7cbbacb1
+  servername: 80cb66x.nl13.h1clayd.click
+  client-fingerprint: chrome
+  network: xhttp
+  xhttp-opts:
+    path: /d610f026b146
+    host: 80cb66x.nl13.h1clayd.click
+    mode: auto
+  udp: true
+- client-fingerprint: firefox
+  name: 德国 | 纯净 | 02
+  network: xhttp
+  port: 443
+  server: 193.160.208.240
+  servername: 193.160.208.240
+  tls: true
+  type: vless
+  udp: true
+  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
+  xhttp-opts:
+    mode: auto
+    path: /assets/twru01/
+- name: 新加坡 | 优选 | 01
+  server: sg2.998998.best
+  port: 443
+  type: trojan
+  password: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
+  sni: nat6.9966338.xyz
   skip-cert-verify: true
+  network: ws
+  ws-opts:
+    path: /eriujtheriughwiue?ed=2560
+    headers:
+      Host: nat6.9966338.xyz
+  udp: true
+- name: 美国 | 优选 | 01
+  server: www.visa.com.hk
+  port: 443
+  type: vless
+  uuid: 7136540e-26e9-4a6c-8e8e-de879de12901
+  tls: true
   alpn:
-  - h3
-  up: '11'
-  down: '55'
-  auth-str: dongtaiwang.com
+  - http/1.1
+  servername: us-lax.862400.xyz
+  client-fingerprint: random
+  network: ws
+  ws-opts:
+    path: /announcement
+    headers:
+      Host: us-lax.862400.xyz
+  udp: true
 - type: hysteria
   name: 美国 | 优选 | 02
   server: 38.6.222.132
@@ -130,46 +162,88 @@ proxies:
   up: '11'
   down: '55'
   auth-str: dongtaiwang.com
-- name: 荷兰 | 优选 | 01
-  server: 193.111.248.54
+- name: 德国 | 优选 | 01
+  server: uk2-2.998998.best
+  port: 443
+  type: vmess
+  uuid: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
+  alterId: 0
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: server3.9966338.xyz
+  network: ws
+  ws-opts:
+    path: /waetasiuofguiwer?ed=2560
+    headers:
+      Host: server3.9966338.xyz
+  udp: true
+- name: 美国 | 优选 | 03
+  server: us2-2.998998.best
   port: 443
   type: vless
-  uuid: a8e5585a-6020-4649-a364-c1ebf3a40548
+  uuid: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
   tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: 0KDql59THS-DXg30wMR0QGgFB6rXARDhr8WoWyfVA2M
-    short-id: 6f0091ebe3029ebb
-  servername: tagderdeutscheneinheit.de
-  client-fingerprint: firefox
-  network: tcp
+  servername: server6.9966338.xyz
+  network: ws
+  ws-opts:
+    path: /fiughoieuhti834t90?ed=2560
+    headers:
+      Host: server6.9966338.xyz
   udp: true
 - cipher: aes-256-gcm
   name: 意大利 | 优选 | 01
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.90
+  server: 202.50.253.99
   type: ss
   udp: true
 - cipher: aes-256-gcm
   name: 意大利 | 优选 | 02
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.72
+  server: 202.50.253.90
   type: ss
   udp: true
-- client-fingerprint: qq
-  name: OTHER | 优选 | 01
-  network: tcp
-  port: 443
-  server: 136.148.83.70
-  servername: aszbk-ru-78dc.my-fade.cloud
-  tls: true
-  type: vless
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 03
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.27
+  type: ss
   udp: true
-  uuid: 00000000-0000-0001-0000-000000000000
+- name: 西班牙 | 优选 | 01
+  server: api.ferrin.uk
+  port: 443
+  type: vless
+  uuid: 7d1a74fd-8a38-4a29-863f-5da53a9e557e
+  tls: true
+  alpn:
+  - h2
+  servername: 7d1a74fd.ferrin.uk
+  client-fingerprint: chrome
+  network: xhttp
+  xhttp-opts:
+    path: /es
+    host: api.ferrin.uk
+    mode: stream-one
+  udp: true
+- name: 英国 | 优选 | 01
+  server: eu2.998998.best
+  port: 443
+  type: vmess
+  uuid: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
+  alterId: 0
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: server47.9966338.xyz
+  network: ws
   ws-opts:
-    path: /
+    path: /socks
+    headers:
+      Host: server47.9966338.xyz
+  udp: true
 - client-fingerprint: firefox
   grpc-opts:
     grpc-mode: gun
@@ -183,6 +257,16 @@ proxies:
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- name: OTHER | 优选 | 01
+  server: 136.148.83.71
+  port: 443
+  type: vless
+  uuid: 00000000-0000-0001-0000-000000000000
+  tls: true
+  servername: wccfu-ru-79dc.my-fade.cloud
+  client-fingerprint: qq
+  network: tcp
+  udp: true
 - name: 俄罗斯 | 优选 | 02
   server: vps3.nemnogogo.com
   port: 443
@@ -199,39 +283,29 @@ proxies:
     grpc-service-name: mobile.api.Event
   udp: true
 - cipher: aes-256-gcm
-  name: 意大利 | 优选 | 03
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.54
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
   name: 意大利 | 优选 | 04
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.45
+  server: 202.50.253.18
   type: ss
   udp: true
-- alpn:
-  - h2
-  client-fingerprint: chrome
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 03
-  network: grpc
+- client-fingerprint: qq
+  name: OTHER | 优选 | 02
+  network: tcp
   port: 443
-  server: leviko-ru4448.shopingggg.ir
-  servername: vps3.nemnogogo.com
+  server: 136.148.83.70
+  servername: aszbk-ru-78dc.my-fade.cloud
   tls: true
   type: vless
   udp: true
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+  uuid: 00000000-0000-0001-0000-000000000000
+  ws-opts:
+    path: /
 - client-fingerprint: firefox
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 04
+  name: 俄罗斯 | 优选 | 03
   network: grpc
   port: 443
   server: 201.24.116.192
@@ -240,6 +314,55 @@ proxies:
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- name: 荷兰 | 优选 | 01
+  server: uk3-2.998998.best
+  port: 443
+  type: vmess
+  uuid: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
+  alterId: 0
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: server22.9966338.xyz
+  network: ws
+  ws-opts:
+    path: /serhrdftshg?ed=2560
+    headers:
+      Host: server22.9966338.xyz
+  udp: true
+- alpn:
+  - h2
+  client-fingerprint: chrome
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯 | 优选 | 04
+  network: grpc
+  port: 443
+  server: leviko-ru4448.shopingggg.ir
+  servername: vps3.nemnogogo.com
+  tls: true
+  type: vless
+  udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- name: OTHER | 优选 | 03
+  server: 188.225.46.6
+  port: 443
+  type: vless
+  uuid: a077dc9a-712f-48ea-b75c-d94af64011ec
+  tls: true
+  flow: xtls-rprx-vision
+  servername: spb.b2ai.top
+  client-fingerprint: firefox
+  network: tcp
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 05
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.72
+  type: ss
+  udp: true
 - name: 瑞士 | 优选 | 01
   type: vless
   server: 193.233.89.130
@@ -256,105 +379,16 @@ proxies:
   grpc-opts:
     grpc-service-name: grpc
 - cipher: aes-256-gcm
-  name: 意大利 | 优选 | 05
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.81
-  type: ss
-- cipher: aes-256-gcm
   name: 意大利 | 优选 | 06
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.27
+  server: 202.50.253.36
   type: ss
   udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 07
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.18
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 08
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.63
-  type: ss
-  udp: true
-- client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: glush.de3.v1
-  name: 德国 | 优选 | 01
-  network: grpc
-  port: 443
-  server: vellum.filnex.baby
-  servername: rookery.moltex.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: ios
-  network: xhttp
-  port: 443
-  server: reedbank.moltex.click
-  servername: reedbank.moltex.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: reedbank.moltex.click
-    mode: auto
-    path: /api/de4/sync
-  name: 德国 | 优选 | 02
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 09
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.99
-  type: ss
-  udp: true
-- alpn:
-  - h2
-  client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: glush.de3.v1
-  name: 德国 | 优选 | 03
-  network: grpc
-  port: 443
-  server: tapestry.gerqix.online
-  servername: tapestry.gerqix.online
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-- alpn:
-  - h2
-  - http/1.1
-  client-fingerprint: edge
-  network: xhttp
-  port: 443
-  server: clearing.moltex.click
-  servername: clearing.moltex.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  xhttp-opts:
-    host: clearing.moltex.click
-    mode: auto
-    path: /api/de5/sync
-  name: 德国 | 优选 | 04
 - type: hysteria
-  name: 美国 | 优选 | 03
-  server: 137.175.82.41
-  port: 20022
+  name: 美国 | 优选 | 04
+  server: 38.6.222.131
+  port: 11008
   password: dongtaiwang.com
   tls: true
   servername: bing.com
@@ -366,23 +400,102 @@ proxies:
   down: '55'
   auth-str: dongtaiwang.com
 - cipher: aes-256-gcm
-  name: 意大利 | 优选 | 10
+  name: 意大利 | 优选 | 07
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.36
+  server: 202.50.253.81
+  type: ss
+- name: 波兰 | 优选 | 01
+  server: mix2.998998.best
+  port: 443
+  type: vmess
+  uuid: bfc876fe-ecbc-4c13-a969-4b757e9e76fb
+  alterId: 0
+  cipher: auto
+  tls: true
+  skip-cert-verify: true
+  servername: server10.9966338.xyz
+  network: ws
+  ws-opts:
+    path: /rthiugoyretdsuigg?ed=2560
+    headers:
+      Host: server10.9966338.xyz
+  udp: true
+- cipher: 2022-blake3-chacha20-poly1305
+  name: 德国 | 优选 | 02
+  password: 3NBsnBLanPfG6i3S2GTHineswr6EeSJPb0PCeMQoGoA=
+  port: 443
+  server: 47.85.238.210
   type: ss
   udp: true
-- name: 美国 | 普通 | 01
-  obfs: salamander
-  obfs-password: 6fltjteoyab7fjf1
-  password: 57beeeb0-03fc-4fc9-94da-7604488a7134
-  port: 40055
-  server: 64.118.154.18
-  servername: psstatic.cdn.bcebos.com
-  skip-cert-verify: true
-  sni: psstatic.cdn.bcebos.com
-  type: hysteria2
+- name: 哈萨克斯坦 | 优选 | 01
+  server: 201.34.136.78
+  port: 443
+  type: vless
+  uuid: 42c83523-9f96-41b2-82d6-2edb71a4ac19
+  tls: true
+  flow: xtls-rprx-vision
+  reality-opts:
+    public-key: fJnm6-PhJGSwHaAdJOzXkYOfCPPCWSlaZrtfm1XsqhA
+    short-id: ''
+  servername: fjn2vd4dgxb6.dynarix-node41.sbs
+  client-fingerprint: firefox
+  network: tcp
   udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 08
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.45
+  type: ss
+  udp: true
+- alpn:
+  - h2
+  client-fingerprint: chrome
+  grpc-opts:
+    grpc-service-name: glush.de7.v1
+  name: 德国 | 优选 | 03
+  network: grpc
+  port: 443
+  server: birchbark.gerqix.online
+  servername: birchbark.gerqix.online
+  tls: true
+  type: vless
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+- client-fingerprint: firefox
+  name: 德国 | 优选 | 04
+  network: ws
+  port: 443
+  server: ws3.falmero.store
+  servername: paperbirch.merlano.monster
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  ws-opts:
+    headers:
+      Host: paperbirch.merlano.monster
+    path: /api/de1/stream
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 09
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.54
+  type: ss
+  udp: true
+- client-fingerprint: firefox
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: glush.de3.v1
+  name: 德国 | 优选 | 05
+  network: grpc
+  port: 443
+  server: vellum.filnex.baby
+  servername: rookery.moltex.click
+  tls: true
+  type: vless
+  udp: true
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
 proxy-groups:
 - name: PROXY
   type: select
