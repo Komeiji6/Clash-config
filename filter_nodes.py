@@ -547,12 +547,14 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
             if flow:
                 p["flow"] = flow
             if sec == "reality":
-                pbk = qs.get("pbk", [""])[0]
-                sid = qs.get("sid", [""])[0]
+                pbk = qs.get("pbk", [""])[0].strip()
+                sid = qs.get("sid", [""])[0].strip()
+                if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
+                    sid = ""
                 if pbk:
                     p["reality-opts"] = {
                         "public-key": pbk,
-                        "short-id": sid or "",
+                        "short-id": sid,
                     }
         net = qs.get("type", ["tcp"])[0].lower()
         if net == "ws":
@@ -800,6 +802,16 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         if p_type in ("ss", "trojan", "hysteria", "hysteria2") and not (proxy.get("password") or proxy.get("auth")):
             continue
 
+        # 5. Reality 校验与清洗 (短 ID 必须为偶数位合法 Hex，否则置空；缺公钥直接过滤)
+        if "reality-opts" in proxy and isinstance(proxy["reality-opts"], dict):
+            ro = dict(proxy["reality-opts"])
+            if not ro.get("public-key"):
+                continue
+            sid = str(ro.get("short-id", "")).strip()
+            if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
+                ro["short-id"] = ""
+            proxy["reality-opts"] = ro
+
         unique_key = get_proxy_fingerprint(proxy)
         if unique_key in seen_keys:
             continue
@@ -854,8 +866,8 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
     proc = subprocess.Popen(
         [BIN_MIHOMO, "-d", str(TMP_STAGE1_DIR), "-f", str(cfg_path)],
         env=GO_LOW_MEM_ENV,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
     )
     _active_procs.append(proc)
 
@@ -865,8 +877,8 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
         s.trust_env = False
         for _ in range(30):
             if proc.poll() is not None:
-                err = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
-                raise RuntimeError(f"Mihomo 初筛实例异常退出: {err[:300]}")
+                err = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
+                raise RuntimeError(f"Mihomo 初筛实例异常退出: {err[:600]}")
             try:
                 r = s.get(f"http://127.0.0.1:{STAGE1_API_PORT}/version", timeout=1)
                 if r.status_code == 200:
