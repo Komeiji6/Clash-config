@@ -2,20 +2,20 @@
 # -*- coding: utf-8 -*-
 """
 Clash 节点全量测速筛选与自动发布脚本 (Snapdragon 410 / 512MB RAM / Debian 11 ARM64)
-目标仓库: git@github.com:Komeiji6/Clash-config.git (nodes 孤儿分支)
+目标仓库: git@github.com:Komeiji6/Clash-config.git (nodes 孤儿分支 & main 主配置)
 运行模式:
-1. 全量拉取上游 (~2600+ 节点)，不提前截断；
-2. Mihomo 高并发 (60协程) 内核级快速握手初筛，严控 1000ms 超时，超标即弃；
-3. 存活节点 3 路无锁探测落地 IP 属性与原生纯净度 (ip-api / ipwho.is)；
-4. 按策略组分桶 (HK, JP, SG, US, 其他地区)，每组上限 20 个，优先纯净与低延迟；
-5. 全流程位于 /tmp/ (tmpfs)，零 eMMC 磨损，最终原子化单 Commit 强推至 GitHub nodes 分支。
+1. Stage 0: 多源并发拉取 (direct + _gh_mirrors)，直连受阻时按需启动轻量 BootstrapProxyManager；
+2. Stage 0.5: asyncio TCP SYN 预筛快速剔除死节点 (无条件放行 UDP 协议与历史保活节点)；
+3. Stage 1 / 1.5: Mihomo 内核并发握手初筛 + 多轮采样抖动/丢包精测；
+4. Stage 2: 3 路并发端到端落地检测 (ipapi.is 原生/广播 IP 识别、Google/Gemini 纯净度、128KiB 微测速)；
+5. Stage 4 / 5: 综合评分排序、单平铺策略组 (PROXY + 漏网之鱼) 重命名、本地保活与滚动门控 Git 推送。
 """
 
+import atexit
 import base64
 import gc
 import json
 import logging
-import urllib.parse
 import os
 import queue
 import re
@@ -25,15 +25,40 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import requests
 import yaml
+
+from net_bootstrap import (
+    BootstrapProxyManager,
+    RECOMMENDED_EXTRA_SOURCES,
+    build_merged_sources,
+    cleanup_all_bootstrap_proxies,
+    cleanup_stale_tmp_artifacts,
+    fetch_urls_with_fallback,
+    git_ssh_env,
+    purge_jsdelivr_urls,
+    run_tcp_prefilter,
+)
+from node_quality import (
+    DEFAULT_IP_CACHE_FILE,
+    DEFAULT_PUSH_STATE_FILE,
+    DEFAULT_SPEEDTEST_BYTES,
+    audit_stage1_node,
+    create_probe_session,
+    evaluate_node_quality,
+    proxy_fingerprint,
+    save_push_state,
+    score_and_rank_nodes,
+    should_push_rolling_update,
+)
 
 # 优先使用 C 加速解析器，大幅降低 ARM64 上的解析耗时与内存占用
 try:
@@ -94,13 +119,16 @@ TMP_DIR = Path("/tmp")
 # 历史存活节点池与元数据定义 (持久化至 /opt/clash-filter/)
 HISTORICAL_POOL_FILE = Path("/opt/clash-filter/saved_working_nodes.yaml")
 HISTORICAL_META_FILE = Path("/opt/clash-filter/historical_meta.json")
-HISTORICAL_MAX_STRIKES = 3      # 连续 3 次测速失联 (即持续 3 小时完全挂掉) 才彻底从历史池注销
+METRICS_FILE = Path("/opt/clash-filter/last_run_metrics.json")
+PUSH_STATE_FILE = DEFAULT_PUSH_STATE_FILE
+HISTORICAL_MAX_STRIKES = 5      # 30min 定时周期下连续 5 次失联 (~2.5h) 才从历史池淘汰
 HISTORICAL_MAX_CAPACITY = 120   # 历史池最大容量上限，防无上限膨胀
 TMP_RAW_YAML = TMP_DIR / "raw_nodes.yaml"
 TMP_STAGE1_DIR = TMP_DIR / "mihomo_stage1"
 TMP_STAGE2_DIR = TMP_DIR / "mihomo_stage2"
 TMP_FINAL_YAML = TMP_DIR / "proxies.yaml"
 TMP_OUT_REPO = TMP_DIR / "out_repo"
+TMP_MAIN_REPO = TMP_DIR / "main_repo"
 
 # Git 发布配置
 GIT_REMOTE_URL = "git@github.com:Komeiji6/Clash-config.git"
@@ -111,10 +139,14 @@ GIT_SSH_KEY = "/root/.ssh/id_ed25519"
 
 # 端口与并发规划
 STAGE1_API_PORT = 19999
-STAGE1_CONCURRENCY = 20         # 初筛并发降至 25（完美适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
+STAGE1_CONCURRENCY = 20         # 初筛并发 20（适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
 STAGE2_API_PORT = 19090
 STAGE2_BASE_PORT = 18080
-STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路无锁)
+STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路独立 Session)
+STAGE2_RELAY_PORT = STAGE2_BASE_PORT + STAGE2_CONCURRENCY  # Stage 2 内部应急中继端口
+STAGE05_TCP_CONCURRENCY = 64    # Stage 0.5 异步 TCP SYN 预筛并发
+STAGE05_TCP_TIMEOUT = 1.8
+MIN_DIRECT_UPSTREAM_NODES = 150 # 低于该阈值时触发 BootstrapProxy 补拉失败源
 
 # 本地机密配置文件 (仅保存在棒子本地 /opt/clash-filter/secrets.json，严禁提交至公共仓库)
 SECRETS_FILE = Path("/opt/clash-filter/secrets.json")
@@ -124,17 +156,19 @@ def _load_local_secrets() -> Dict[str, str]:
         try:
             with SECRETS_FILE.open("r", encoding="utf-8") as f:
                 return json.load(f)
-        except Exception:
-            pass
+        except Exception as exc:
+            logging.getLogger("filter_nodes").warning("读取 %s 失败: %s", SECRETS_FILE, exc)
     return {}
 
 _SECRETS = _load_local_secrets()
 IPAPI_IS_KEY = _SECRETS.get("ipapi_is_key", os.getenv("IPAPI_IS_KEY", ""))
 
 # 策略组容量上限与阈值
-MAX_NODES_PER_GROUP = 50        # 每个含节点策略组最多保留 50 个
-HANDSHAKE_TIMEOUT_MS = 3500     # 握手超时放宽至 3000ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
-PREMIUM_MAX_LATENCY_MS = 800    # 「优选」延迟上限放宽为 800ms
+MAX_NODES_PER_GROUP = 50        # 平铺 PROXY 策略组最多保留 50 个精选节点
+STAGE2_MAX_CANDIDATES = 75      # Stage 1.5 -> Stage 2 候选上限，保障整轮耗时稳定在 9~12 分钟内
+HANDSHAKE_TIMEOUT_MS = 3500     # 握手超时 3500ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
+PREMIUM_MAX_LATENCY_MS = 800    # 「优选」延迟上限 800ms
+STAGE2_SPEEDTEST_BYTES = DEFAULT_SPEEDTEST_BYTES  # 131072 (128 KiB)
 MIN_SAFEGUARD_NODES = 3         # 熔断保底阈值
 
 # Go 运行时内存限制 (防止触发 512MB OOM)
@@ -143,22 +177,6 @@ GO_LOW_MEM_ENV = {
     "GOGC": "30",
     "GOMEMLIMIT": "120MiB",
 }
-
-# 数据中心 / 机房 Hosting 关键词 (辅助判定非原生住宅 IP)
-DATACENTER_KEYWORDS = (
-    "amazon", "aws", "google", "gcp", "microsoft", "azure", "alibaba", "aliyun",
-    "tencent", "oracle", "digitalocean", "vultr", "linode", "akamai", "hetzner",
-    "ovh", "cloudflare", "choopa", "leaseweb", "zenlayer", "racknerd",
-    "colocrossing", "datacamp", "cdn77", "m247", "hosting", "datacenter",
-    "data center", "cloud", "vps", "server", "dedicated", "contabo", "scaleway",
-    "kamatera", "ucloud", "huawei", "bytedance", "dmit", "bandwagon", "it7",
-    "sharktech", "psychz", "quadranet", "cogent", "hostwinds", "ionos", "vultr",
-    "b2 net", "xserver", "sakura internet", "conoha", "gmo internet", "idc",
-)
-
-# 地区优先级与品质优先级
-CC_PRIORITY = {"HK": 1, "JP": 2, "SG": 3, "US": 4, "OTHER": 5}
-TIER_PRIORITY = {"纯净": 1, "优选": 2, "普通": 3}
 
 # ======================== 日志配置 ========================
 
@@ -173,20 +191,51 @@ log = logging.getLogger("filter_nodes")
 _active_procs: List[subprocess.Popen] = []
 
 
-def kill_active_procs() -> None:
-    """终止所有活动的 Mihomo 子进程。"""
-    global _active_procs
-    for p in _active_procs:
-        if p and p.poll() is None:
-            try:
-                p.terminate()
-                p.wait(timeout=3)
-            except Exception:
+def _terminate_proc(p: subprocess.Popen) -> None:
+    """安全终止单个子进程及其整个进程组，并关闭标准流管道。"""
+    if not p:
+        return
+    try:
+        if p.poll() is None:
+            if os.name != "nt":
                 try:
+                    os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+                except Exception:
+                    p.terminate()
+            else:
+                p.terminate()
+            try:
+                p.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                if os.name != "nt":
+                    try:
+                        os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+                    except Exception:
+                        p.kill()
+                else:
                     p.kill()
+                p.wait(timeout=2)
+    except Exception:
+        pass
+    finally:
+        for pipe in (p.stdout, p.stderr):
+            if pipe is not None:
+                try:
+                    pipe.close()
                 except Exception:
                     pass
+
+
+def kill_active_procs() -> None:
+    """终止所有活动的 Mihomo 子进程（含 BootstrapProxyManager）。"""
+    global _active_procs
+    for p in _active_procs:
+        _terminate_proc(p)
     _active_procs.clear()
+    try:
+        cleanup_all_bootstrap_proxies()
+    except Exception:
+        pass
 
 
 def cleanup_tmp() -> None:
@@ -198,6 +247,7 @@ def cleanup_tmp() -> None:
         TMP_STAGE2_DIR,
         TMP_FINAL_YAML,
         TMP_OUT_REPO,
+        TMP_MAIN_REPO,
     ]
     for path in targets:
         try:
@@ -207,71 +257,92 @@ def cleanup_tmp() -> None:
                 path.unlink(missing_ok=True)
         except Exception:
             pass
+    try:
+        cleanup_stale_tmp_artifacts(TMP_DIR, max_age_sec=1800.0)
+    except Exception:
+        pass
     gc.collect()
 
 
 def _signal_handler(sig: int, _frame: Any) -> None:
     log.warning("收到中断信号 (%d)，正在安全退出并清理 /tmp/...", sig)
     cleanup_tmp()
-    sys.exit(128 + sig)
+    raise SystemExit(128 + sig)
+
+
+atexit.register(cleanup_tmp)
 
 
 # ======================== 冷启动与自愈自检 ========================
 
-def ensure_system_time_and_network() -> None:
-    """自检 NTP 时钟与网络连通性，并在必要时触发吉大 Dr.COM 认证。"""
-    now = datetime.now()
-    if now.year < 2024:
-        log.warning("检测到硬件 RTC 未同步 (当前年份=%d)，等待 NTP 校准...", now.year)
+def _probe_internet_204(session: requests.Session) -> bool:
+    """严格直连探测是否真正连通外网 (不跟随校园网认证重定向)。"""
+    for url in ("http://www.gstatic.com/generate_204", "http://connect.rom.miui.com/generate_204"):
         try:
-            subprocess.run(["systemctl", "restart", "systemd-timesyncd"], timeout=10, check=False)
+            r = session.get(url, timeout=3, allow_redirects=False)
+            if r.status_code == 204:
+                return True
         except Exception:
             pass
+    return False
 
-        for _ in range(15):
-            time.sleep(1)
-            if datetime.now().year >= 2024:
-                log.info("NTP 校准成功: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
-                break
+
+def ensure_system_time_and_network() -> None:
+    """
+    冷启动自愈自检（先认证校园网、再校准时钟，消除无 RTC 设备冷启动鸡生蛋死锁）：
+    1. 先直连探测 generate_204（禁止重定向），若受限且配置了校园网账号则先触发 Dr.COM 登录并复检；
+    2. 再检查系统时钟（< 2024 年时重启 systemd-timesyncd 或通过 HTTP Date 强行自愈）。
+    """
+    with create_probe_session(None, pool_size=2, user_agent="curl/8.5.0") as s:
+        if _probe_internet_204(s):
+            log.info("互联网连通性就绪。")
         else:
-            log.warning("NTP 依然未同步，尝试通过国内 HTTP Date 头强行自愈时钟...")
-            for mirror in ["http://www.baidu.com", "http://www.aliyun.com", "http://www.qq.com"]:
+            log.info("互联网未连通或受限于校园网认证网关，尝试执行校园网心跳登录...")
+            acc = _SECRETS.get("campus_account", "")
+            pwd = _SECRETS.get("campus_password", "")
+            if acc and pwd:
+                auth_url = (
+                    f"http://10.100.61.3/drcom/login?"
+                    f"callback=dr1003&DDDDD={urllib.parse.quote(acc)}&upass={urllib.parse.quote(pwd)}&0MKKey=123456"
+                )
                 try:
-                    resp = requests.head(mirror, timeout=3)
-                    if "Date" in resp.headers:
-                        gmt_time = parsedate_to_datetime(resp.headers["Date"])
-                        time_str = gmt_time.strftime("%Y-%m-%d %H:%M:%S")
-                        subprocess.run(["date", "-s", time_str], timeout=5, check=False)
-                        log.info("通过 HTTP Date 强制同步系统时间成功: %s", time_str)
-                        break
-                except Exception:
-                    pass
+                    resp = s.get(auth_url, timeout=5)
+                    time.sleep(2)
+                    if _probe_internet_204(s):
+                        log.info("校园网认证成功 (HTTP %d)，外网连通已恢复。", resp.status_code)
+                    else:
+                        log.warning("校园网认证心跳已发送 (HTTP %d)，但外网 204 复检暂未通过。", resp.status_code)
+                except Exception as e:
+                    log.warning("发送校园网认证心跳异常: %s", e)
+            else:
+                log.info("未配置本地校园网认证账号，跳过自动登录。")
 
-    # 检查网络与校园网认证状态
-    try:
-        r = requests.get("http://www.gstatic.com/generate_204", timeout=3)
-        if r.status_code == 204:
-            log.info("互联网与时钟均处于就绪状态。")
-            return
-    except Exception:
-        pass
+        now = datetime.now()
+        if now.year < 2024:
+            log.warning("检测到硬件 RTC 未同步 (当前年份=%d)，等待 NTP 校准...", now.year)
+            try:
+                subprocess.run(["systemctl", "restart", "systemd-timesyncd"], timeout=10, check=False)
+            except Exception:
+                pass
 
-    log.info("互联网未连通或受限于校园网认证网关，尝试执行校园网心跳登录...")
-    acc = _SECRETS.get("campus_account", "")
-    pwd = _SECRETS.get("campus_password", "")
-    if acc and pwd:
-        auth_url = (
-            f"http://10.100.61.3/drcom/login?"
-            f"callback=dr1003&DDDDD={urllib.parse.quote(acc)}&upass={urllib.parse.quote(pwd)}&0MKKey=123456"
-        )
-        try:
-            requests.get(auth_url, timeout=5)
-            time.sleep(2)
-            log.info("校园网认证心跳发送完毕，网络已恢复就绪。")
-        except Exception as e:
-            log.warning("发送校园网认证心跳异常: %s", e)
-    else:
-        log.info("未配置本地校园网认证账号，跳过自动登录。")
+            for _ in range(15):
+                time.sleep(1)
+                if datetime.now().year >= 2024:
+                    log.info("NTP 校准成功: %s", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
+                    break
+            else:
+                log.warning("NTP 依然未同步，尝试通过国内 HTTP Date 头强行自愈时钟...")
+                for mirror in ["http://www.baidu.com", "http://www.aliyun.com", "http://www.qq.com"]:
+                    try:
+                        resp = s.head(mirror, timeout=3, allow_redirects=False)
+                        if "Date" in resp.headers:
+                            gmt_time = parsedate_to_datetime(resp.headers["Date"])
+                            time_str = gmt_time.strftime("%Y-%m-%d %H:%M:%S")
+                            subprocess.run(["date", "-u", "-s", time_str], timeout=5, check=False)
+                            log.info("通过 HTTP Date 强制同步系统时间成功 (UTC): %s", time_str)
+                            break
+                    except Exception:
+                        pass
 
 
 # ======================== 工具函数 ========================
@@ -289,7 +360,35 @@ def load_proxies_yaml(path: Path) -> List[Dict[str, Any]]:
     return []
 
 
-def dump_proxies_yaml(path: Path, proxies: List[Dict[str, Any]]) -> None:
+def _atomic_write_text(target: Path, content: str) -> None:
+    """同文件系统原子写入：写入同目录隐藏临时文件 -> flush + fsync -> os.replace。"""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = target.parent / f".{target.name}.{os.getpid()}.tmp"
+    try:
+        with tmp_path.open("w", encoding="utf-8") as f:
+            f.write(content)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(str(tmp_path), str(target))
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
+def dump_proxies_yaml(path: Path, proxies: List[Dict[str, Any]], *, atomic: bool = False) -> None:
+    if atomic:
+        content = yaml.dump(
+            {"proxies": proxies},
+            Dumper=YamlDumper,
+            allow_unicode=True,
+            sort_keys=False,
+            default_flow_style=False,
+        )
+        _atomic_write_text(path, content)
+        return
     with path.open("w", encoding="utf-8") as f:
         yaml.dump(
             {"proxies": proxies},
@@ -303,18 +402,7 @@ def dump_proxies_yaml(path: Path, proxies: List[Dict[str, Any]]) -> None:
 
 def get_proxy_fingerprint(proxy: Dict[str, Any]) -> str:
     """提取节点的唯一身份指纹 (协议、服务器、端口、认证凭据)，免疫命名变更影响。"""
-    server = str(proxy.get("server", "")).strip().lower()
-    port = str(proxy.get("port", "")).strip()
-    p_type = str(proxy.get("type", "")).strip().lower()
-    cred = str(
-        proxy.get("uuid")
-        or proxy.get("password")
-        or proxy.get("auth")
-        or proxy.get("auth-str")
-        or proxy.get("token")
-        or ""
-    ).strip()
-    return f"{p_type}://{server}:{port}:{cred}"
+    return proxy_fingerprint(proxy)
 
 
 def load_historical_pool() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -400,8 +488,8 @@ def update_and_save_historical_pool(
                      old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
         else:
             purged_count += 1
-            log.info("历史节点 [%s] 连续 %d 次测速失联 (已持续 %d 小时)，正式从历史池淘汰注销",
-                     old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
+            log.info("历史节点 [%s] 连续 %d 次测速失联，正式从历史池淘汰注销",
+                     old_p.get("name", fp[:24]), curr_fails)
 
     # 3. 合并：当前实测活节点 + 容错保护节点
     combined_pool: List[Dict[str, Any]] = list(current_verified_proxies) + preserved_grace_proxies
@@ -412,17 +500,13 @@ def update_and_save_historical_pool(
         retained_fps = {get_proxy_fingerprint(p) for p in combined_pool}
         new_meta = {fp: v for fp, v in new_meta.items() if fp in retained_fps}
 
-    # 5. 原子化安全落盘 (在 tmpfs 临时写入后原子移动替换，防断电文件损坏)
+    # 5. 同文件系统原子化安全落盘 (同目录写临时文件 + fsync + os.replace，断电不损坏)
     try:
-        tmp_pool_file = TMP_DIR / "saved_working_nodes.yaml.tmp"
-        tmp_meta_file = TMP_DIR / "historical_meta.json.tmp"
-
-        dump_proxies_yaml(tmp_pool_file, combined_pool)
-        with tmp_meta_file.open("w", encoding="utf-8") as f:
-            json.dump(new_meta, f, ensure_ascii=False, indent=2)
-
-        shutil.move(str(tmp_pool_file), str(HISTORICAL_POOL_FILE))
-        shutil.move(str(tmp_meta_file), str(HISTORICAL_META_FILE))
+        _atomic_write_text(
+            HISTORICAL_META_FILE,
+            json.dumps(new_meta, ensure_ascii=False, indent=2),
+        )
+        dump_proxies_yaml(HISTORICAL_POOL_FILE, combined_pool, atomic=True)
 
         log.info(
             "🎉 历史保活池更新完毕: 当期实测合格 %d 个, 容错保活 %d 个, 连续失联淘汰 %d 个 -> 当前总蓄水容量 %d 个",
@@ -795,8 +879,9 @@ def parse_base64_payload(text: str) -> List[Dict[str, Any]]:
 
 # ======================== 阶段 1: 多源上游拉取与去重 ========================
 
-# 记录每个节点指纹首次归属的上游来源（仅内存中用于产率统计，绝不写入配置文件）
+# 记录每个节点指纹首次归属的上游来源与原始名称（仅内存中用于统计与国家兜底，绝不写入配置）
 _SOURCE_BY_FP: Dict[str, str] = {}
+_RAW_NAME_BY_FP: Dict[str, str] = {}
 
 VALID_SS_CIPHERS = {
     "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
@@ -808,56 +893,293 @@ VALID_SS_CIPHERS = {
 }
 
 
+def _parse_upstream_payload(source_name: str, text: str) -> List[Dict[str, Any]]:
+    """将上游响应文本解析为标准 Clash proxy 字典列表 (YAML -> Base64/Raw)。"""
+    proxies_list: List[Dict[str, Any]] = []
+    if "proxies:" in text:
+        try:
+            data = yaml.load(text, Loader=YamlLoader)
+            if isinstance(data, dict) and isinstance(data.get("proxies"), list):
+                proxies_list = [p for p in data["proxies"] if isinstance(p, dict)]
+        except Exception:
+            pass
+
+    if not proxies_list:
+        try:
+            proxies_list = parse_base64_payload(text)
+        except Exception as e:
+            log.warning("[%s] Base64/Raw 解码异常: %s", source_name, e)
+    return proxies_list
+
+
 def _fetch_single_source_group(idx_and_item: Tuple[int, Tuple[str, List[str]]]) -> Tuple[int, str, List[Dict[str, Any]]]:
-    """拉取单个上游源（带镜像故障转移）。"""
+    """直连拉取单个上游源（带镜像故障转移）。"""
     order_idx, (source_name, urls) = idx_and_item
     headers = {"User-Agent": "ClashMeta/1.19.34"}
-    with requests.Session() as session:
-        session.trust_env = False
+    with create_probe_session(None, pool_size=2, user_agent="ClashMeta/1.19.34") as session:
         for url in urls:
             try:
                 resp = session.get(url, headers=headers, timeout=12)
                 resp.raise_for_status()
-                text = resp.text
-                proxies_list: List[Dict[str, Any]] = []
-
-                # 1. 优先尝试作为标准 Clash YAML 解析
-                if "proxies:" in text:
-                    try:
-                        data = yaml.load(text, Loader=YamlLoader)
-                        if isinstance(data, dict) and isinstance(data.get("proxies"), list):
-                            proxies_list = [p for p in data["proxies"] if isinstance(p, dict)]
-                    except Exception:
-                        pass
-
-                # 2. 若非 YAML 或 YAML 未解析出节点，自动触发 Base64 / 原生协议极速解码
-                if not proxies_list:
-                    try:
-                        proxies_list = parse_base64_payload(text)
-                    except Exception as e:
-                        log.warning("[%s] Base64/Raw 解码异常: %s", source_name, e)
-
+                proxies_list = _parse_upstream_payload(source_name, resp.text)
                 if proxies_list:
                     log.info("拉取成功 [%s]: %s (获取到 %d 个原始节点)", source_name, url.split("?")[0], len(proxies_list))
                     return (order_idx, source_name, proxies_list)
                 log.warning("[%s] 响应未包含有效节点数据: %s", source_name, url)
             except Exception as exc:
                 log.warning("[%s] 镜像拉取失败 (%s): %s", source_name, url.split("?")[0], exc)
-    log.warning("订阅源 [%s] 所有镜像均不可达", source_name)
+    log.warning("订阅源 [%s] 直连镜像均不可达", source_name)
     return (order_idx, source_name, [])
 
 
+def _sanitize_proxy_options(proxy: Dict[str, Any]) -> bool:
+    """
+    清洗上游 Clash 节点字典中的传输层与 TLS 选项，防止 Mihomo 因类型错误
+    (如 ws-opts.headers 为字符串、alpn 非列表等) 启动解析失败。
+    返回 False 表示核心关键配置破损，应直接丢弃该节点。
+    """
+    # 1. 基础字符串字段归一化
+    for str_key in ("servername", "sni", "client-fingerprint", "flow", "network"):
+        if str_key in proxy:
+            val = proxy[str_key]
+            if val is None or isinstance(val, (dict, list)):
+                proxy.pop(str_key, None)
+            else:
+                s_val = str(val).strip()
+                if s_val:
+                    proxy[str_key] = s_val
+                else:
+                    proxy.pop(str_key, None)
+
+    for bool_key in ("tls", "udp", "skip-cert-verify", "tfo"):
+        if bool_key in proxy and not isinstance(proxy[bool_key], bool):
+            val = str(proxy[bool_key]).strip().lower()
+            if val in ("true", "1", "yes"):
+                proxy[bool_key] = True
+            elif val in ("false", "0", "no"):
+                proxy[bool_key] = False
+            else:
+                proxy.pop(bool_key, None)
+
+    if "alterId" in proxy and not isinstance(proxy["alterId"], int):
+        try:
+            proxy["alterId"] = int(proxy["alterId"])
+        except (TypeError, ValueError):
+            proxy["alterId"] = 0
+
+    # 2. alpn 必须为字符串列表
+    if "alpn" in proxy:
+        alpn_val = proxy["alpn"]
+        if isinstance(alpn_val, str):
+            alpn_list = [a.strip() for a in alpn_val.split(",") if a.strip()]
+        elif isinstance(alpn_val, (list, tuple)):
+            alpn_list = [str(a).strip() for a in alpn_val if a is not None and str(a).strip()]
+        else:
+            alpn_list = []
+        if alpn_list:
+            proxy["alpn"] = alpn_list
+        else:
+            proxy.pop("alpn", None)
+
+    # 3. Reality 校验与清洗
+    if "reality-opts" in proxy:
+        if not isinstance(proxy["reality-opts"], dict):
+            return False
+        ro = dict(proxy["reality-opts"])
+        pbk = str(ro.get("public-key") or "").strip()
+        if not pbk:
+            return False
+        ro["public-key"] = pbk
+        sid = str(ro.get("short-id", "")).strip()
+        if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
+            ro["short-id"] = ""
+        else:
+            ro["short-id"] = sid
+        proxy["reality-opts"] = ro
+
+    # 4. ws-opts 清洗 (确保为 dict 且 ws-opts.headers 为 dict[str, str])
+    if "ws-opts" in proxy:
+        ws = proxy["ws-opts"]
+        if not isinstance(ws, dict):
+            proxy.pop("ws-opts", None)
+        else:
+            ws = dict(ws)
+            if "path" in ws:
+                if ws["path"] is None or isinstance(ws["path"], (dict, list)):
+                    ws["path"] = "/"
+                else:
+                    ws["path"] = str(ws["path"])
+            if "headers" in ws:
+                hdrs = ws["headers"]
+                clean_hdrs: Dict[str, str] = {}
+                if isinstance(hdrs, dict):
+                    for k, v in hdrs.items():
+                        if k is not None and v is not None and not isinstance(v, (dict, list)):
+                            ks = str(k).strip()
+                            vs = str(v).strip()
+                            if ks and vs:
+                                clean_hdrs[ks] = vs
+                elif isinstance(hdrs, str) and hdrs.strip():
+                    s_hdr = hdrs.strip()
+                    if s_hdr.startswith("{"):
+                        try:
+                            parsed = json.loads(s_hdr)
+                            if isinstance(parsed, dict):
+                                clean_hdrs = {
+                                    str(k).strip(): str(v).strip()
+                                    for k, v in parsed.items()
+                                    if k is not None and v is not None and str(k).strip() and str(v).strip()
+                                }
+                        except Exception:
+                            pass
+                    elif ":" in s_hdr:
+                        k, v = s_hdr.split(":", 1)
+                        if k.strip() and v.strip():
+                            clean_hdrs = {k.strip(): v.strip()}
+                    elif " " not in s_hdr and "/" not in s_hdr:
+                        clean_hdrs = {"Host": s_hdr}
+                if clean_hdrs:
+                    ws["headers"] = clean_hdrs
+                else:
+                    ws.pop("headers", None)
+            proxy["ws-opts"] = ws
+
+    # 5. h2-opts 清洗 (host 必须为 list[str])
+    if "h2-opts" in proxy:
+        h2 = proxy["h2-opts"]
+        if not isinstance(h2, dict):
+            proxy.pop("h2-opts", None)
+        else:
+            h2 = dict(h2)
+            if "path" in h2 and not isinstance(h2["path"], str):
+                h2["path"] = "/" if h2["path"] is None else str(h2["path"])
+            if "host" in h2:
+                hv = h2["host"]
+                if isinstance(hv, str) and hv.strip():
+                    h2["host"] = [hv.strip()]
+                elif isinstance(hv, (list, tuple)):
+                    hlist = [str(x).strip() for x in hv if x is not None and str(x).strip()]
+                    if hlist:
+                        h2["host"] = hlist
+                    else:
+                        h2.pop("host", None)
+                else:
+                    h2.pop("host", None)
+            proxy["h2-opts"] = h2
+
+    # 6. http-opts 清洗 (path 为 list[str], headers 为 dict[str, list[str]])
+    if "http-opts" in proxy:
+        ho = proxy["http-opts"]
+        if not isinstance(ho, dict):
+            proxy.pop("http-opts", None)
+        else:
+            ho = dict(ho)
+            if "path" in ho:
+                pv = ho["path"]
+                if isinstance(pv, str):
+                    ho["path"] = [pv or "/"]
+                elif isinstance(pv, (list, tuple)):
+                    plist = [str(x) for x in pv if x is not None]
+                    ho["path"] = plist or ["/"]
+                else:
+                    ho["path"] = ["/"]
+            if "headers" in ho:
+                hh = ho["headers"]
+                if isinstance(hh, dict):
+                    clean_hh: Dict[str, List[str]] = {}
+                    for k, v in hh.items():
+                        ks = str(k).strip() if k is not None else ""
+                        if not ks:
+                            continue
+                        if isinstance(v, (list, tuple)):
+                            vals = [str(x) for x in v if x is not None]
+                        elif v is not None and not isinstance(v, dict):
+                            vals = [str(v)]
+                        else:
+                            vals = []
+                        if vals:
+                            clean_hh[ks] = vals
+                    if clean_hh:
+                        ho["headers"] = clean_hh
+                    else:
+                        ho.pop("headers", None)
+                else:
+                    ho.pop("headers", None)
+            proxy["http-opts"] = ho
+
+    # 7. grpc-opts / xhttp-opts 清洗
+    if "grpc-opts" in proxy:
+        go = proxy["grpc-opts"]
+        if not isinstance(go, dict):
+            proxy.pop("grpc-opts", None)
+        else:
+            go = dict(go)
+            if "grpc-service-name" in go and go["grpc-service-name"] is not None:
+                go["grpc-service-name"] = str(go["grpc-service-name"])
+            proxy["grpc-opts"] = go
+
+    if "xhttp-opts" in proxy and not isinstance(proxy["xhttp-opts"], dict):
+        proxy.pop("xhttp-opts", None)
+
+    return True
+
+
 def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, Any]], Dict[str, Any]]:
-    """多源并发拉取上游订阅节点（按优先级顺序去重合并，保留高优源质量参数），并回流历史保活池。"""
+    """
+    Stage 0 + Stage 0.5:
+    1. 合并精选源与扩展高产源，先通过直连 + _gh_mirrors() 并发拉取；
+    2. 若直连拉取总数过少或全灭，按需从 saved_working_nodes.yaml 启动 BootstrapProxyManager 补拉，
+       并在离开 Stage 0 前确保彻底关闭 BootstrapProxy 释放内存；
+    3. 回流历史保活池并去重清洗；
+    4. 执行 Stage 0.5 asyncio TCP SYN 预筛 (无条件放行 UDP 协议与历史保活节点)。
+    """
     _SOURCE_BY_FP.clear()
+    _RAW_NAME_BY_FP.clear()
+
+    all_sources = build_merged_sources(UPSTREAM_SOURCES, RECOMMENDED_EXTRA_SOURCES)
     fetched_groups: List[Tuple[int, str, List[Dict[str, Any]]]] = []
 
     with ThreadPoolExecutor(max_workers=4) as pool:
-        futures = [pool.submit(_fetch_single_source_group, (i, item)) for i, item in enumerate(UPSTREAM_SOURCES)]
+        futures = [pool.submit(_fetch_single_source_group, (i, item)) for i, item in enumerate(all_sources)]
         for f in as_completed(futures):
             fetched_groups.append(f.result())
 
-    # 严格按 UPSTREAM_SOURCES 定义的高存活率顺序排列合并
+    direct_upstream_total = sum(len(plist) for _, _, plist in fetched_groups)
+    failed_indices = [idx for idx, _, plist in fetched_groups if not plist]
+
+    # 直连上游节点不足或全部失败时，按需启动 BootstrapProxyManager 回退补拉，离开块后必定销毁
+    if failed_indices and direct_upstream_total < MIN_DIRECT_UPSTREAM_NODES:
+        log.warning(
+            "[Stage 0] 直连仅获取到 %d 个上游节点 (< %d)，启动 BootstrapProxyManager 补拉 %d 个失败源...",
+            direct_upstream_total, MIN_DIRECT_UPSTREAM_NODES, len(failed_indices),
+        )
+        with BootstrapProxyManager(
+            saved_pool_file=HISTORICAL_POOL_FILE,
+            bin_mihomo=BIN_MIHOMO,
+            tmp_dir=TMP_DIR,
+        ) as bootstrap_mgr:
+            proxy_url = bootstrap_mgr.ensure_started()
+            if proxy_url:
+                group_map = {idx: (idx, name, plist) for idx, name, plist in fetched_groups}
+                for idx in failed_indices:
+                    source_name, urls = all_sources[idx]
+                    text, matched_url, transport = fetch_urls_with_fallback(
+                        urls,
+                        proxy_url=proxy_url,
+                        timeout=12.0,
+                        validator=lambda t, sn=source_name: len(_parse_upstream_payload(sn, t)) > 0,
+                    )
+                    if text:
+                        plist = _parse_upstream_payload(source_name, text)
+                        if plist:
+                            log.info(
+                                "引导代理补拉成功 [%s] (%s): %s (%d 个节点)",
+                                source_name, transport, (matched_url or "").split("?")[0], len(plist),
+                            )
+                            group_map[idx] = (idx, source_name, plist)
+                fetched_groups = list(group_map.values())
+
+    # 严格按源定义优先级排列合并
     fetched_groups.sort(key=lambda x: x[0])
 
     tagged_raw_proxies: List[Tuple[str, Dict[str, Any]]] = []
@@ -865,18 +1187,20 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         for p in plist:
             tagged_raw_proxies.append((source_name, p))
 
-    # 核心保障：自动回流历史存活节点池（带 3 振出局容错元数据）
+    # 核心保障：自动回流历史存活节点池（带容错元数据）
     old_historical_proxies, old_meta = load_historical_pool()
+    historical_fps: Set[str] = set()
     if old_historical_proxies:
         for p in old_historical_proxies:
+            historical_fps.add(get_proxy_fingerprint(p))
             tagged_raw_proxies.append(("历史保活池", p))
         log.info("成功回流历史保活节点池: %d 个 (进入保活复测队列)", len(old_historical_proxies))
 
     if not tagged_raw_proxies:
-        raise RuntimeError("所有上游镜像源均拉取失败，终止任务。")
+        raise RuntimeError("所有上游镜像源及历史节点均拉取失败，终止任务。")
 
     raw_count = len(tagged_raw_proxies)
-    seen_keys = set()
+    seen_keys: Set[str] = set()
     dedup_proxies: List[Dict[str, Any]] = []
     per_source_uniq: Counter = Counter()
 
@@ -885,10 +1209,9 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
             continue
         proxy = dict(raw_proxy)
 
-        # 1. 保留所有包含服务器的节点，绝不根据名字过滤，若名称缺失自动补齐
-        _ = str(proxy.get("name") or f"node_{idx}").strip()
+        orig_name = str(proxy.get("name") or f"node_{idx}").strip()
 
-        # 2. 协议归一化与白名单过滤 (剔除 compatible、http、socks5 等无效类型)
+        # 协议归一化与白名单过滤 (剔除 compatible、http、socks5 等无效类型)
         p_type = str(proxy.get("type", "")).strip().lower()
         if p_type == "hy2":
             p_type = "hysteria2"
@@ -896,7 +1219,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         if not p_type or p_type not in VALID_PROXY_TYPES:
             continue
 
-        # 3. 服务器与端口有效性过滤
+        # 服务器与端口有效性过滤
         server = str(proxy.get("server", "")).strip().lower()
         port = str(proxy.get("port", "")).strip()
         if not server or not port or server in INVALID_SERVERS or " " in server or "compatible" in server:
@@ -910,7 +1233,7 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         except ValueError:
             continue
 
-        # 4. 凭证完整性与内核兼容性清洗
+        # 凭证完整性与内核兼容性清洗
         if p_type in ("vmess", "vless") and not proxy.get("uuid"):
             continue
         if p_type == "vless" and str(proxy.get("cipher", "")).lower() == "none":
@@ -927,21 +1250,16 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
             if not cipher or cipher not in VALID_SS_CIPHERS:
                 continue
 
-        # 5. Reality 校验与清洗 (短 ID 必须为 16 位合法 Hex，否则置空；缺公钥直接过滤)
-        if "reality-opts" in proxy and isinstance(proxy["reality-opts"], dict):
-            ro = dict(proxy["reality-opts"])
-            if not ro.get("public-key"):
-                continue
-            sid = str(ro.get("short-id", "")).strip()
-            if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
-                ro["short-id"] = ""
-            proxy["reality-opts"] = ro
+        # 传输层与 Reality 选项清洗 (防止 ws-opts.headers 非 map 等导致的 Mihomo 配置解析失败)
+        if not _sanitize_proxy_options(proxy):
+            continue
 
         unique_key = get_proxy_fingerprint(proxy)
         if unique_key in seen_keys:
             continue
         seen_keys.add(unique_key)
         _SOURCE_BY_FP[unique_key] = source_name
+        _RAW_NAME_BY_FP[unique_key] = orig_name
         per_source_uniq[source_name] += 1
 
         proxy["name"] = f"p_{idx:05d}"
@@ -950,18 +1268,40 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
     del tagged_raw_proxies, seen_keys
     gc.collect()
 
-    dedup_count = len(dedup_proxies)
+    dedup_raw_count = len(dedup_proxies)
     top_contrib = ", ".join(f"{k}:{v}" for k, v in per_source_uniq.most_common(8))
-    log.info("多源汇聚完成: 原始节点 %d 个 -> 全量待测 %d 个 (主要净增量: %s)", raw_count, dedup_count, top_contrib)
-    return dedup_proxies, raw_count, dedup_count, old_historical_proxies, old_meta
+    log.info("多源汇聚去重完成: 原始 %d 个 -> 去重后 %d 个 (主要净增量: %s)", raw_count, dedup_raw_count, top_contrib)
+
+    # Stage 0.5: 异步 TCP SYN 预筛 (无条件放行 UDP 协议与历史保活节点)
+    prefiltered_proxies, prefilter_stats = run_tcp_prefilter(
+        dedup_proxies,
+        concurrency=STAGE05_TCP_CONCURRENCY,
+        timeout=STAGE05_TCP_TIMEOUT,
+        historical_fps=historical_fps,
+    )
+    del dedup_proxies
+    gc.collect()
+
+    log.info(
+        "Stage 0.5 预筛完成: %d -> %d 个待测节点 (TCP丢弃=%d, UDP放行=%d, 历史放行=%d, 耗时=%.2fs)",
+        dedup_raw_count,
+        len(prefiltered_proxies),
+        prefilter_stats.get("tcp_fail", 0),
+        prefilter_stats.get("udp_bypassed", 0),
+        prefilter_stats.get("hist_bypassed", 0),
+        prefilter_stats.get("elapsed_s", 0.0),
+    )
+    return prefiltered_proxies, raw_count, dedup_raw_count, old_historical_proxies, old_meta
 
 
 # ======================== 阶段 2: Mihomo 高并发握手初筛 ========================
 
-def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Dict[str, Any], int]]:
+def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    使用 Mihomo 内核并发协程在 ~60 秒内对全部 2600+ 节点执行握手测速。
-    握手 > 1000ms 或超时失败的节点直接丢弃。
+    Stage 1 + Stage 1.5:
+    1. 使用 Mihomo 内核并发协程对预筛节点执行握手测速（线程复用 Session，零连接池抖动）；
+    2. 对初筛存活节点调用 node_quality.audit_stage1_node 执行 5 并发多轮采样抖动与丢包精测；
+    3. 完成后必定关闭 Stage 1 Mihomo 并清理 /tmp/mihomo_stage1 释放内存。
     """
     TMP_STAGE1_DIR.mkdir(parents=True, exist_ok=True)
     cfg_path = TMP_STAGE1_DIR / "config.yaml"
@@ -995,228 +1335,160 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
         env=GO_LOW_MEM_ENV,
         stdout=subprocess.PIPE,
         stderr=subprocess.STDOUT,
+        start_new_session=(os.name != "nt"),
     )
     _active_procs.append(proc)
 
-    # 等待 REST API 就绪
-    ready = False
-    with requests.Session() as s:
-        s.trust_env = False
-        for _ in range(30):
-            if proc.poll() is not None:
-                err = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
-                raise RuntimeError(f"Mihomo 初筛实例异常退出: {err[:600]}")
-            try:
-                r = s.get(f"http://127.0.0.1:{STAGE1_API_PORT}/version", timeout=1)
-                if r.status_code == 200:
-                    ready = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
+    try:
+        # 等待 REST API 就绪
+        ready = False
+        with create_probe_session(None, pool_size=2) as s:
+            for _ in range(30):
+                if proc.poll() is not None:
+                    err = proc.stdout.read().decode("utf-8", errors="replace") if proc.stdout else ""
+                    raise RuntimeError(f"Mihomo 初筛实例异常退出: {err[:600]}")
+                try:
+                    r = s.get(f"http://127.0.0.1:{STAGE1_API_PORT}/version", timeout=1)
+                    if r.status_code == 200:
+                        ready = True
+                        break
+                except Exception:
+                    pass
+                time.sleep(0.5)
 
-    if not ready:
-        kill_active_procs()
-        raise RuntimeError("等待 Mihomo 初筛实例就绪超时。")
+        if not ready:
+            raise RuntimeError("等待 Mihomo 初筛实例就绪超时。")
 
-    log.info("Mihomo 实例就绪，开始对全量 %d 个节点执行 60 协程并发握手测速 (握手上限=%dms)...",
-             len(proxies), HANDSHAKE_TIMEOUT_MS)
+        log.info("Mihomo 实例就绪，开始对 %d 个节点执行 %d 并发握手测速 (握手上限=%dms)...",
+                 len(proxies), STAGE1_CONCURRENCY, HANDSHAKE_TIMEOUT_MS)
 
-    proxy_map = {p["name"]: p for p in proxies}
-    alive_records: List[Tuple[Dict[str, Any], int]] = []
-    tested_count = [0]
-    total_count = len(proxies)
-    t_start = time.monotonic()
+        proxy_map = {p["name"]: p for p in proxies}
+        alive_records: List[Tuple[Dict[str, Any], int]] = []
+        tested_count = [0]
+        total_count = len(proxies)
+        t_start = time.monotonic()
 
-    def check_node(name: str) -> Optional[Tuple[Dict[str, Any], int]]:
-        url = (
-            f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{name}/delay"
-            f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
-        )
-        with requests.Session() as s:
-            s.trust_env = False
-            # 允许最多 2 次握手探测机会（消除偶发单包丢包和 WiFi 射频抖动带来的误杀）
+        tls_state = threading.local()
+        sessions_lock = threading.Lock()
+        created_sessions: List[requests.Session] = []
+
+        def _get_thread_session() -> requests.Session:
+            sess = getattr(tls_state, "session", None)
+            if sess is None:
+                sess = create_probe_session(None, pool_size=4)
+                tls_state.session = sess
+                with sessions_lock:
+                    created_sessions.append(sess)
+            return sess
+
+        def check_node(name: str) -> Optional[Tuple[Dict[str, Any], int]]:
+            encoded_name = urllib.parse.quote(name, safe="")
+            url = (
+                f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{encoded_name}/delay"
+                f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
+            )
+            s = _get_thread_session()
             for attempt in range(2):
                 try:
                     resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.8)
                     if resp.status_code == 200:
                         d = resp.json()
-                        delay = d.get("delay", 9999)
+                        delay = int(d.get("delay", 9999))
                         if 0 < delay <= HANDSHAKE_TIMEOUT_MS:
                             return (proxy_map[name], delay)
                 except Exception:
                     pass
                 if attempt == 0:
                     time.sleep(0.3)
-        return None
-
-    names = [p["name"] for p in proxies]
-    with ThreadPoolExecutor(max_workers=STAGE1_CONCURRENCY) as pool:
-        futures = {pool.submit(check_node, name): name for name in names}
-        for f in as_completed(futures):
-            res = f.result()
-            if res:
-                alive_records.append(res)
-            tested_count[0] += 1
-            if tested_count[0] % 500 == 0 or tested_count[0] == total_count:
-                elapsed = time.monotonic() - t_start
-                rate = tested_count[0] / elapsed if elapsed > 0 else 0
-                log.info("初筛进度: %d/%d (%.1f 个/秒), 存活 (<=%dms): %d",
-                         tested_count[0], total_count, rate, HANDSHAKE_TIMEOUT_MS, len(alive_records))
-
-    elapsed_total = time.monotonic() - t_start
-    log.info("全量初筛完成！耗时: %.1f 秒, 初步存活节点数: %d 个", elapsed_total, len(alive_records))
-
-    # 阶段 1.5: 对初步存活节点执行 5 并发双轮抽样精测与稳定性熔断 (消除冷启动与 50% 丢包假活)
-    if alive_records:
-        log.info("开始对 %d 个初选节点执行 5 并发低载双轮精测与稳定性熔断...", len(alive_records))
-        refined_records: List[Tuple[Dict[str, Any], int]] = []
-        flaky_count = 0
-
-        def refine_check(item: Tuple[Dict[str, Any], int]) -> Optional[Tuple[Dict[str, Any], int]]:
-            p, d1 = item
-            time.sleep(0.3)
-            url = (
-                f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{p['name']}/delay"
-                f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
-            )
-            # 三局两胜容错精测机制（绝不误杀冷启动与轻微抖动的好节点）
-            success_delays = [d1]
-            with requests.Session() as s:
-                s.trust_env = False
-                for _ in range(2):
-                    try:
-                        resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.8)
-                        if resp.status_code == 200:
-                            d = resp.json().get("delay", 9999)
-                            if 0 < d <= HANDSHAKE_TIMEOUT_MS:
-                                success_delays.append(d)
-                                if len(success_delays) >= 2:
-                                    break
-                    except Exception:
-                        pass
-                    time.sleep(0.3)
-
-            # 只要在至多 3 轮测试中成功通过 2 轮，节点即认定稳定可用！
-            if len(success_delays) >= 2:
-                d_min = min(success_delays)
-                d_max = max(success_delays)
-                jitter = d_max - d_min
-                # 综合延迟平稳得分：抖动大的往后排，但绝不直接丢弃
-                effective_score = int(0.5 * d_min + 0.3 * d_max + 0.2 * jitter)
-                return (p, effective_score)
             return None
 
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            futures = [pool.submit(refine_check, item) for item in alive_records]
-            for f in as_completed(futures):
-                res = f.result()
-                if res:
-                    refined_records.append(res)
-                else:
-                    flaky_count += 1
-
-        log.info("双轮精测完成: 最终稳定入围 %d 个 (已成功熔断剔除 %d 个偶发丢包/假活节点)",
-                 len(refined_records), flaky_count)
-        alive_records = refined_records
-
-    if alive_records and _SOURCE_BY_FP:
-        src_hits = Counter(_SOURCE_BY_FP.get(get_proxy_fingerprint(p), "unknown") for p, _ in alive_records)
-        hit_summary = ", ".join(f"{k}:{v}" for k, v in src_hits.most_common())
-        log.info("各来源存活贡献统计 (%d 个): %s", len(alive_records), hit_summary)
-
-    # 关闭初筛 Mihomo 并释放资源
-    kill_active_procs()
-    shutil.rmtree(TMP_STAGE1_DIR, ignore_errors=True)
-    gc.collect()
-
-    return alive_records
-
-
-# ======================== 阶段 3: 落地 IP 属性与品质判定 ========================
-
-def query_exit_ip_info(proxy_url: str) -> Optional[Dict[str, Any]]:
-    """通过本地代理探测落地国家代码与 ISP/Hosting 属性。"""
-    proxies = {"http": proxy_url, "https": proxy_url}
-    headers = {"User-Agent": "curl/7.74.0", "Connection": "close"}
-
-    # 1. 旗舰接口: ipapi.is (若配置了 Key，具备最高精度 datacenter/vpn/proxy 识别)
-    if IPAPI_IS_KEY:
+        names = [p["name"] for p in proxies]
         try:
-            with requests.Session() as s:
-                s.trust_env = False
-                r = s.get(
-                    f"https://api.ipapi.is/?key={IPAPI_IS_KEY}",
-                    proxies=proxies,
-                    headers=headers,
-                    timeout=6,
+            with ThreadPoolExecutor(max_workers=STAGE1_CONCURRENCY) as pool:
+                futures = {pool.submit(check_node, name): name for name in names}
+                for f in as_completed(futures):
+                    res = f.result()
+                    if res:
+                        alive_records.append(res)
+                    tested_count[0] += 1
+                    if tested_count[0] % 500 == 0 or tested_count[0] == total_count:
+                        elapsed = time.monotonic() - t_start
+                        rate = tested_count[0] / elapsed if elapsed > 0 else 0
+                        log.info("初筛进度: %d/%d (%.1f 个/秒), 存活 (<=%dms): %d",
+                                 tested_count[0], total_count, rate, HANDSHAKE_TIMEOUT_MS, len(alive_records))
+        finally:
+            for s in created_sessions:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+
+        elapsed_total = time.monotonic() - t_start
+        log.info("全量初筛完成！耗时: %.1f 秒, 初步存活节点数: %d 个", elapsed_total, len(alive_records))
+
+        # 阶段 1.5: 5 并发多轮采样抖动与丢包精测 (audit_stage1_node)
+        audited_records: List[Dict[str, Any]] = []
+        if alive_records:
+            log.info("开始对 %d 个初选节点执行 5 并发低载多轮精测 (抖动与丢包评估)...", len(alive_records))
+            flaky_count = 0
+            refine_tls = threading.local()
+            refine_sessions: List[requests.Session] = []
+
+            def _get_refine_session() -> requests.Session:
+                sess = getattr(refine_tls, "session", None)
+                if sess is None:
+                    sess = create_probe_session(None, pool_size=2)
+                    refine_tls.session = sess
+                    with sessions_lock:
+                        refine_sessions.append(sess)
+                return sess
+
+            def refine_check(item: Tuple[Dict[str, Any], int]) -> Optional[Dict[str, Any]]:
+                p, d1 = item
+                time.sleep(0.25)
+                return audit_stage1_node(
+                    p,
+                    d1,
+                    api_port=STAGE1_API_PORT,
+                    timeout_ms=HANDSHAKE_TIMEOUT_MS,
+                    samples=3,
+                    min_success=2,
+                    session=_get_refine_session(),
+                    sample_interval_s=0.25,
                 )
-                if r.status_code == 200:
-                    d = r.json()
-                    loc = d.get("location") or {}
-                    cc = str(loc.get("country_code", "")).strip().upper()
-                    if cc:
-                        company = d.get("company") or {}
-                        asn_info = d.get("asn") or {}
-                        is_dc = bool(d.get("is_datacenter", False))
-                        is_proxy = bool(d.get("is_proxy", False) or d.get("is_vpn", False) or d.get("is_tor", False))
-                        return {
-                            "cc": cc,
-                            "isp": str(company.get("name", "")),
-                            "org": str(asn_info.get("org", "")),
-                            "as": f"AS{asn_info.get('asn', '')}",
-                            "hosting": is_dc,
-                            "proxy": is_proxy,
-                        }
-        except Exception:
-            pass
 
-    # 2. 主力接口: ip-api.com (免 Key 极速直出)
-    try:
-        with requests.Session() as s:
-            s.trust_env = False
-            r = s.get(
-                "http://ip-api.com/json/?fields=status,countryCode,isp,org,as,hosting,proxy,mobile,query",
-                proxies=proxies,
-                headers=headers,
-                timeout=6,
-            )
-            if r.status_code == 200:
-                d = r.json()
-                if d.get("status") == "success" and d.get("countryCode"):
-                    return {
-                        "cc": str(d.get("countryCode", "")).strip().upper(),
-                        "isp": str(d.get("isp", "")),
-                        "org": str(d.get("org", "")),
-                        "as": str(d.get("as", "")),
-                        "hosting": d.get("hosting"),
-                        "proxy": d.get("proxy"),
-                    }
-    except Exception:
-        pass
+            try:
+                with ThreadPoolExecutor(max_workers=5) as pool:
+                    futures = [pool.submit(refine_check, item) for item in alive_records]
+                    for f in as_completed(futures):
+                        res = f.result()
+                        if res:
+                            audited_records.append(res)
+                        else:
+                            flaky_count += 1
+            finally:
+                for s in refine_sessions:
+                    try:
+                        s.close()
+                    except Exception:
+                        pass
 
-    # 3. 备用接口: ipwho.is
-    try:
-        with requests.Session() as s:
-            s.trust_env = False
-            r = s.get("http://ipwho.is/", proxies=proxies, headers=headers, timeout=6)
-            if r.status_code == 200:
-                d = r.json()
-                if d.get("success") and d.get("country_code"):
-                    conn = d.get("connection") or {}
-                    return {
-                        "cc": str(d.get("country_code", "")).strip().upper(),
-                        "isp": str(conn.get("isp", "")),
-                        "org": str(conn.get("org", "")),
-                        "as": str(conn.get("asn", "")),
-                        "hosting": None,
-                        "proxy": None,
-                    }
-    except Exception:
-        pass
+            log.info("Stage 1.5 精测完成: 最终稳定入围 %d 个 (已熔断剔除 %d 个偶发丢包/假活节点)",
+                     len(audited_records), flaky_count)
 
-    return None
+        if audited_records and _SOURCE_BY_FP:
+            src_hits = Counter(_SOURCE_BY_FP.get(get_proxy_fingerprint(r["proxy"]), "unknown") for r in audited_records)
+            hit_summary = ", ".join(f"{k}:{v}" for k, v in src_hits.most_common())
+            log.info("各来源存活贡献统计 (%d 个): %s", len(audited_records), hit_summary)
 
+        return audited_records
+    finally:
+        kill_active_procs()
+        shutil.rmtree(TMP_STAGE1_DIR, ignore_errors=True)
+        gc.collect()
+
+
+# ======================== 阶段 3: 落地 IP 属性与品质判定 (委托 node_quality.py) ========================
 
 
 def extract_cc_from_name(raw_name: str) -> str:
@@ -1247,50 +1519,102 @@ def extract_cc_from_name(raw_name: str) -> str:
             return cc
     return "OTHER"
 
-def classify_node_tier(ip_info: Dict[str, Any], latency_ms: int) -> str:
-    """根据 IP 属性与握手延迟判定节点品质 (纯净 / 优选 / 普通)。"""
-    isp_blob = f"{ip_info.get('isp', '')} {ip_info.get('org', '')} {ip_info.get('as', '')}".lower()
-    is_hosting_kw = any(kw in isp_blob for kw in DATACENTER_KEYWORDS)
-    api_hosting = ip_info.get("hosting")
-    api_proxy = ip_info.get("proxy")
-
-    # 纯净住宅 IP 判定
-    if (
-        isp_blob.strip()
-        and not is_hosting_kw
-        and api_hosting is False
-        and api_proxy is False
-    ):
-        return "纯净"
-
-    # 优选低延迟判定
-    if latency_ms <= PREMIUM_MAX_LATENCY_MS:
-        return "优选"
-
-    return "普通"
-
 
 def run_stage2_exit_detection(
-    alive_records: List[Tuple[Dict[str, Any], int]]
+    alive_records: List[Any]
 ) -> List[Dict[str, Any]]:
-    """对初筛存活节点进行 3 路并发落地检测与纯净度判定。"""
+    """
+    Stage 2: 3 路并发落地 IP 属性、原生/广播识别、Google/Gemini 纯净度及 128KiB 微测速。
+    通过独立每节点 Session 避免 WORKER_i 切换时的 CONNECT 隧道复用，并提供内置 RELAY 端口
+    用于对 TLS 直连 ipapi.is 失败的节点做中继补查。
+    """
     if not alive_records:
         return []
 
     TMP_STAGE2_DIR.mkdir(parents=True, exist_ok=True)
     cfg_path = TMP_STAGE2_DIR / "config.yaml"
 
+    # Stage 1.5 -> Stage 2 候选封顶 (按延迟/抖动/丢包率优先选取前 STAGE2_MAX_CANDIDATES 个，确保总耗时留足余量)
+    def _stage15_sort_key(rec: Any) -> Tuple[int, int, float]:
+        if isinstance(rec, dict):
+            return (
+                int(rec.get("delay_ms", rec.get("delay", 9999))),
+                int(rec.get("jitter_ms", 0)),
+                float(rec.get("loss_rate", 0.0)),
+            )
+        return (int(rec[1]), 0, 0.0)
+
+    selected_alive = sorted(alive_records, key=_stage15_sort_key)
+    if len(selected_alive) > STAGE2_MAX_CANDIDATES:
+        log.info(
+            "Stage 2 候选收敛: Stage 1.5 稳定节点 %d 个 -> 精选延迟最优前 %d 个进入落地检测",
+            len(selected_alive), STAGE2_MAX_CANDIDATES,
+        )
+        selected_alive = selected_alive[:STAGE2_MAX_CANDIDATES]
+
     mihomo_proxies: List[Dict[str, Any]] = []
     internal_names: List[str] = []
-    task_items: List[Tuple[str, int, Dict[str, Any]]] = []
+    task_items: List[Tuple[str, int, int, float, Dict[str, Any]]] = []
 
-    for rank, (proxy, delay) in enumerate(alive_records):
+    for rank, rec in enumerate(selected_alive):
+        if isinstance(rec, dict):
+            proxy = rec["proxy"]
+            delay = int(rec.get("delay_ms", rec.get("delay", 0)))
+            jitter_ms = int(rec.get("jitter_ms", 0))
+            loss_rate = float(rec.get("loss_rate", 0.0))
+        else:
+            proxy, delay = rec
+            jitter_ms = 0
+            loss_rate = 0.0
+
         name = f"w_{rank:04d}"
         p_copy = dict(proxy)
         p_copy["name"] = name
         mihomo_proxies.append(p_copy)
         internal_names.append(name)
-        task_items.append((name, delay, proxy))
+        task_items.append((name, int(delay), jitter_ms, loss_rate, proxy))
+
+    # 按延迟排序前 16 个作为中继池候选，用于 ipapi.is TLS EOF 补查
+    relay_candidates = [
+        item[0]
+        for item in sorted(task_items, key=lambda x: x[1])[:16]
+    ] or internal_names[:1]
+
+    proxy_groups: List[Dict[str, Any]] = [
+        {
+            "name": f"WORKER_{i}",
+            "type": "select",
+            "proxies": internal_names,
+        }
+        for i in range(STAGE2_CONCURRENCY)
+    ]
+    proxy_groups.append({
+        "name": "RELAY",
+        "type": "url-test",
+        "proxies": relay_candidates,
+        "url": "https://cp.cloudflare.com/generate_204",
+        "interval": 120,
+        "tolerance": 100,
+        "lazy": False,
+    })
+
+    listeners: List[Dict[str, Any]] = [
+        {
+            "name": f"http-worker-{i}",
+            "type": "http",
+            "port": STAGE2_BASE_PORT + i,
+            "listen": "127.0.0.1",
+            "proxy": f"WORKER_{i}",
+        }
+        for i in range(STAGE2_CONCURRENCY)
+    ]
+    listeners.append({
+        "name": "http-relay",
+        "type": "http",
+        "port": STAGE2_RELAY_PORT,
+        "listen": "127.0.0.1",
+        "proxy": "RELAY",
+    })
 
     cfg = {
         "allow-lan": False,
@@ -1304,24 +1628,8 @@ def run_stage2_exit_detection(
         "profile": {"store-selected": False, "store-fake-ip": False},
         "dns": {"enable": False},
         "proxies": mihomo_proxies,
-        "proxy-groups": [
-            {
-                "name": f"WORKER_{i}",
-                "type": "select",
-                "proxies": internal_names,
-            }
-            for i in range(STAGE2_CONCURRENCY)
-        ],
-        "listeners": [
-            {
-                "name": f"http-worker-{i}",
-                "type": "http",
-                "port": STAGE2_BASE_PORT + i,
-                "listen": "127.0.0.1",
-                "proxy": f"WORKER_{i}",
-            }
-            for i in range(STAGE2_CONCURRENCY)
-        ],
+        "proxy-groups": proxy_groups,
+        "listeners": listeners,
         "rules": ["MATCH,DIRECT"],
     }
 
@@ -1331,230 +1639,155 @@ def run_stage2_exit_detection(
     del cfg, mihomo_proxies
     gc.collect()
 
-    log.info("启动落地检测 Mihomo 实例 (并发端口: %d~%d)...",
-             STAGE2_BASE_PORT, STAGE2_BASE_PORT + STAGE2_CONCURRENCY - 1)
+    log.info("启动落地检测 Mihomo 实例 (并发端口: %d~%d, 中继端口: %d)...",
+             STAGE2_BASE_PORT, STAGE2_BASE_PORT + STAGE2_CONCURRENCY - 1, STAGE2_RELAY_PORT)
     proc = subprocess.Popen(
         [BIN_MIHOMO, "-d", str(TMP_STAGE2_DIR), "-f", str(cfg_path)],
         env=GO_LOW_MEM_ENV,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
+        start_new_session=(os.name != "nt"),
     )
     _active_procs.append(proc)
 
-    # 等待 REST API 就绪
-    ready = False
-    with requests.Session() as s:
-        s.trust_env = False
-        for _ in range(30):
-            if proc.poll() is not None:
-                err = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
-                raise RuntimeError(f"Mihomo 落地实例异常退出: {err[:300]}")
-            try:
-                r = s.get(f"http://127.0.0.1:{STAGE2_API_PORT}/version", timeout=1)
-                if r.status_code == 200:
-                    ready = True
-                    break
-            except Exception:
-                pass
-            time.sleep(0.5)
-
-    if not ready:
-        kill_active_procs()
-        raise RuntimeError("等待 Mihomo 落地实例就绪超时。")
-
-    task_q: "queue.Queue[Tuple[str, int, Dict[str, Any]]]" = queue.Queue()
-    for item in task_items:
-        task_q.put(item)
-
-    results_lock = threading.Lock()
-    verified_records: List[Dict[str, Any]] = []
-    progress_counter = [0]
-    total_tasks = len(task_items)
-
-    log.info("开始落地 IP 纯净度与地区属性检测 (待测 %d 个)...", total_tasks)
-
-    def worker(worker_id: int) -> None:
-        group_name = f"WORKER_{worker_id}"
-        proxy_url = f"http://127.0.0.1:{STAGE2_BASE_PORT + worker_id}"
-        ctrl_url = f"http://127.0.0.1:{STAGE2_API_PORT}/proxies/{group_name}"
-
-        with requests.Session() as ctrl_s:
-            ctrl_s.trust_env = False
-            while True:
+    try:
+        # 等待 REST API 就绪
+        ready = False
+        with create_probe_session(None, pool_size=2) as s:
+            for _ in range(30):
+                if proc.poll() is not None:
+                    err = proc.stderr.read().decode("utf-8", errors="replace") if proc.stderr else ""
+                    raise RuntimeError(f"Mihomo 落地实例异常退出: {err[:300]}")
                 try:
-                    name, delay, orig_proxy = task_q.get_nowait()
-                except queue.Empty:
-                    break
-
-                try:
-                    sw = ctrl_s.put(ctrl_url, json={"name": name}, timeout=3)
-                    if sw.status_code not in (200, 204):
-                        continue
-
-                    ip_info = query_exit_ip_info(proxy_url)
-                    if not ip_info:
-                        # 容错降级：免费第三方 IP API 若临时超时或限流，绝不误杀真实可用的节点
-                        inferred_cc = extract_cc_from_name(orig_proxy.get("name", ""))
-                        ip_info = {
-                            "cc": inferred_cc or "OTHER",
-                            "isp": "Unknown",
-                            "org": "",
-                            "as": "",
-                            "hosting": None,
-                            "proxy": None,
-                        }
-
-                    cc = ip_info["cc"]
-                    if not re.fullmatch(r"[A-Z]{2}", cc):
-                        cc = "OTHER"
-
-                    # 严格剔除中国大陆落地节点 (CN)，防止国内流量回环与无效翻墙
-                    if cc == "CN":
-                        continue
-
-                    # 核心校验：多目标端到端高精可用性探测（7s 宽裕超时 + 双轮容错重试，杜绝误杀）
-                    https_ok = False
-                    with requests.Session() as browse_s:
-                        browse_s.trust_env = False
-                        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                        proxies = {"http": proxy_url, "https": proxy_url}
-
-                        for attempt in range(2):
-                            # 探测 1：Google 204（核心翻墙验证）
-                            try:
-                                r_google = browse_s.get(
-                                    "https://www.google.com/generate_204",
-                                    proxies=proxies,
-                                    headers=headers,
-                                    timeout=7,
-                                )
-                                if r_google.status_code in (200, 204):
-                                    https_ok = True
-                                    break
-                            except Exception:
-                                pass
-
-                            # 探测 2：YouTube 204（备选破墙探测，应对 Google 单点微抖动）
-                            try:
-                                r_yt = browse_s.get(
-                                    "https://www.youtube.com/generate_204",
-                                    proxies=proxies,
-                                    headers=headers,
-                                    timeout=7,
-                                )
-                                if r_yt.status_code in (200, 204):
-                                    https_ok = True
-                                    break
-                            except Exception:
-                                pass
-
-                            # 探测 3：Cloudflare 204 / trace（全球国际网络连通与双向传输验证）
-                            try:
-                                r_cf = browse_s.get(
-                                    "https://cp.cloudflare.com/generate_204",
-                                    proxies=proxies,
-                                    headers=headers,
-                                    timeout=7,
-                                )
-                                if r_cf.status_code in (200, 204):
-                                    https_ok = True
-                                    break
-                            except Exception:
-                                pass
-
-                            if attempt == 0 and not https_ok:
-                                time.sleep(0.5)
-
-                    if not https_ok:
-                        continue
-
-                    tier = classify_node_tier(ip_info, delay)
-
-                    with results_lock:
-                        verified_records.append({
-                            "cc": cc,
-                            "tier": tier,
-                            "delay": delay,
-                            "proxy": orig_proxy,
-                        })
+                    r = s.get(f"http://127.0.0.1:{STAGE2_API_PORT}/version", timeout=1)
+                    if r.status_code == 200:
+                        ready = True
+                        break
                 except Exception:
                     pass
-                finally:
-                    with results_lock:
-                        progress_counter[0] += 1
-                        if progress_counter[0] % 10 == 0 or progress_counter[0] == total_tasks:
-                            log.info("落地检测进度: %d/%d (已验证合格: %d)",
-                                     progress_counter[0], total_tasks, len(verified_records))
-                    task_q.task_done()
-                    time.sleep(0.2)
+                time.sleep(0.5)
 
-    threads = [
-        threading.Thread(target=worker, args=(i,), daemon=True)
-        for i in range(STAGE2_CONCURRENCY)
-    ]
-    for t in threads:
-        t.start()
-    for t in threads:
-        t.join()
+        if not ready:
+            raise RuntimeError("等待 Mihomo 落地实例就绪超时。")
 
-    kill_active_procs()
-    shutil.rmtree(TMP_STAGE2_DIR, ignore_errors=True)
-    gc.collect()
+        task_q: "queue.Queue[Tuple[str, int, int, float, Dict[str, Any]]]" = queue.Queue()
+        for item in task_items:
+            task_q.put(item)
 
-    log.info("落地属性检测完成，成功获取到 %d 个合格节点的地区与纯净度标签", len(verified_records))
-    return verified_records
+        results_lock = threading.Lock()
+        verified_records: List[Dict[str, Any]] = []
+        progress_counter = [0]
+        total_tasks = len(task_items)
+        relay_proxy_url = f"http://127.0.0.1:{STAGE2_RELAY_PORT}"
+
+        log.info("开始落地 IP 原生属性、Google/Gemini 纯净度与微测速 (待测 %d 个)...", total_tasks)
+
+        def worker(worker_id: int) -> None:
+            group_name = f"WORKER_{worker_id}"
+            proxy_url = f"http://127.0.0.1:{STAGE2_BASE_PORT + worker_id}"
+            ctrl_url = f"http://127.0.0.1:{STAGE2_API_PORT}/proxies/{group_name}"
+
+            with create_probe_session(None, pool_size=2) as ctrl_s:
+                while True:
+                    try:
+                        name, delay, jitter_ms, loss_rate, orig_proxy = task_q.get_nowait()
+                    except queue.Empty:
+                        break
+
+                    try:
+                        sw = ctrl_s.put(ctrl_url, json={"name": name}, timeout=3)
+                        if sw.status_code not in (200, 204):
+                            continue
+
+                        fp = get_proxy_fingerprint(orig_proxy)
+                        raw_name = _RAW_NAME_BY_FP.get(fp, orig_proxy.get("name", ""))
+                        res = evaluate_node_quality(
+                            orig_proxy,
+                            proxy_url,
+                            delay,
+                            jitter_ms=jitter_ms,
+                            loss_rate=loss_rate,
+                            ipapi_key=IPAPI_IS_KEY,
+                            relay_proxy_url=relay_proxy_url,
+                            ip_cache_file=DEFAULT_IP_CACHE_FILE,
+                            enable_speedtest=True,
+                            speedtest_bytes=STAGE2_SPEEDTEST_BYTES,
+                            speedtest_timeout=5.0,
+                            probe_timeout=6.0,
+                            enable_rdap_fallback=True,
+                            fallback_cc_fn=lambda _n, rn=raw_name: extract_cc_from_name(rn),
+                        )
+                        if res is not None:
+                            with results_lock:
+                                verified_records.append(res)
+                    except Exception:
+                        pass
+                    finally:
+                        with results_lock:
+                            progress_counter[0] += 1
+                            if progress_counter[0] % 10 == 0 or progress_counter[0] == total_tasks:
+                                native_cnt = sum(1 for r in verified_records if r.get("ip_origin") == "原生")
+                                gclean_cnt = sum(1 for r in verified_records if r.get("google_clean"))
+                                log.info(
+                                    "落地检测进度: %d/%d (合格: %d | 原生: %d | Google纯净: %d)",
+                                    progress_counter[0], total_tasks, len(verified_records), native_cnt, gclean_cnt,
+                                )
+                        task_q.task_done()
+                        time.sleep(0.15)
+
+        threads = [
+            threading.Thread(target=worker, args=(i,), daemon=True)
+            for i in range(STAGE2_CONCURRENCY)
+        ]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        log.info("落地属性检测完成，成功获取到 %d 个合格节点的综合质量评分", len(verified_records))
+        return verified_records
+    finally:
+        kill_active_procs()
+        shutil.rmtree(TMP_STAGE2_DIR, ignore_errors=True)
+        gc.collect()
 
 
-# ======================== 阶段 4: 策略组分桶、单组上限 20 与规范重命名 ========================
+# ======================== 阶段 4: 综合评分排序、容量封顶与规范重命名 ========================
 
 def bucket_and_limit_nodes(verified_records: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """
-    按 cmfa-merged-config.yaml 的策略组分桶：
-    - 香港 (HK)
-    - 日本 (JP)
-    - 新加坡 (SG)
-    - 美国 (US)
-    - 其他地区 (OTHER)
-
-    在每个分桶中：
-    1. 排序优先级：纯净 (住宅) > 优选 (低延迟) > 普通；
-    2. 延迟升序 (握手延迟低的排前面)；
-    3. 每个策略组严格只保留最多 MAX_NODES_PER_GROUP (20) 个；
-    4. 规范重命名为 "{CC} | {tier} | {两位编号}" (例如 "HK | 纯净 | 01")。
+    调用 node_quality.score_and_rank_nodes 执行全局综合质量排序与单平铺策略组封顶:
+    - 综合纯净度 + 原生/广播 IP + Google/Gemini 无封禁 + 吞吐量 + 延迟/抖动 + 协议加成；
+    - 单平铺策略组上限 MAX_NODES_PER_GROUP (50) 个；
+    - 重命名为 "{地区} | {tier}·{原生|广播} | {两位编号}"，保持单平铺 PROXY + 漏网之鱼 布局。
     """
-    valid_records = [r for r in verified_records if r["cc"] != "CN"]
-
-    # 全局扁平化排序：纯净优先 -> 稳定性综合延迟评分升序
-    valid_records.sort(
-        key=lambda x: (
-            TIER_PRIORITY.get(x["tier"], 9),
-            x["delay"],
-        )
+    final_proxies = score_and_rank_nodes(
+        verified_records,
+        max_nodes=MAX_NODES_PER_GROUP,
+        cc_region_names=CC_REGION_NAMES,
+        include_origin_in_name=True,
     )
 
-    final_proxies: List[Dict[str, Any]] = []
-    naming_counter: Counter = Counter()
-
-    for item in valid_records:
-        cc = item["cc"]
-        tier = item["tier"]
-        naming_counter[(cc, tier)] += 1
-        seq = naming_counter[(cc, tier)]
-
-        cc_cn = CC_REGION_NAMES.get(cc, cc)
-        new_name = f"{cc_cn} | {tier} | {seq:02d}"
-        node_dict = dict(item["proxy"])
-        node_dict["name"] = new_name
-
-        final_proxies.append({
-            "cc": cc,
-            "tier": tier,
-            "delay": item["delay"],
-            "proxy": node_dict,
-        })
-
-    log.info("全局优选排序完成: 共保留 %d 个合格节点 (首位节点延迟评分: %dms)",
-             len(final_proxies), final_proxies[0]["delay"] if final_proxies else 0)
+    if final_proxies:
+        top = final_proxies[0]
+        origin_counts = Counter(r.get("ip_origin", "未知") for r in final_proxies)
+        gclean_cnt = sum(1 for r in final_proxies if r.get("google_clean"))
+        gem_cnt = sum(1 for r in final_proxies if r.get("gemini_clean"))
+        log.info(
+            "全局优选排序完成: 共保留 %d 个节点 (上限=%d) | 首位=[%s] score=%.1f delay=%dms speed=%.0fkbps | 原生=%d 广播=%d Google净=%d Gemini净=%d",
+            len(final_proxies),
+            MAX_NODES_PER_GROUP,
+            top["proxy"]["name"],
+            float(top.get("quality_score", 0.0)),
+            int(top.get("delay", 0)),
+            float(top.get("speed_kbps", 0.0)),
+            origin_counts.get("原生", 0),
+            origin_counts.get("广播", 0),
+            gclean_cnt,
+            gem_cnt,
+        )
+    else:
+        log.warning("全局优选排序完成: 0 个合格节点")
     return final_proxies
 
 
@@ -1645,10 +1878,15 @@ def build_readme(
     final_records: List[Dict[str, Any]],
 ) -> str:
     tier_counts = Counter(r["tier"] for r in final_records)
+    origin_counts = Counter(r.get("ip_origin", "未知") for r in final_records)
     cc_counts = Counter(r["cc"] for r in final_records)
 
     clean_count = tier_counts.get("纯净", 0)
     premium_count = tier_counts.get("优选", 0)
+    native_count = origin_counts.get("原生", 0)
+    broadcast_count = origin_counts.get("广播", 0)
+    gclean_count = sum(1 for r in final_records if r.get("google_clean"))
+    gemini_count = sum(1 for r in final_records if r.get("gemini_clean"))
     total_final = len(final_records)
 
     cc_rows = "\n".join(
@@ -1673,10 +1911,10 @@ def build_readme(
 * **CDN 镜像（GitHub 直连受阻时备用）**：
   ```text
   https://cdn.jsdelivr.net/gh/Komeiji6/Clash-config@nodes/proxies.yaml
-  `
+  ```
 * **国内反代镜像（校园网/直连受阻备用）**：
-  `	ext
-  https://ghproxy.net/https://raw.githubusercontent.com/Komeiji6/Clash-config/nodes/proxies.yaml
+  ```text
+  https://ghfast.top/https://raw.githubusercontent.com/Komeiji6/Clash-config/nodes/proxies.yaml
   ```
 
 > 💡 **需要开箱即用完整分流配置？** 请访问 [main 分支主页](https://github.com/Komeiji6/Clash-config) 获取内置精细规则分流的完整主配置。
@@ -1708,8 +1946,9 @@ proxy-providers:
 | :--- | :--- |
 | **最后更新时间 (UTC)** | `{update_time_utc}` |
 | **当前入库节点总数** | **{total_final}** (已全量排除中国大陆落地) |
-| **纯净住宅节点** | {clean_count} |
-| **优选低延节点** | {premium_count} |
+| **纯净住宅 / 优选节点** | {clean_count} / {premium_count} |
+| **原生 IP / 广播 IP** | {native_count} / {broadcast_count} |
+| **Google 无封禁 / Gemini 可达** | {gclean_count} / {gemini_count} |
 
 ### 落地国家 / 地区分布
 
@@ -1718,8 +1957,51 @@ proxy-providers:
 {cc_rows}
 
 ---
-*注：节点命名规则为 `{{地区中文名}} | {{纯净/优选}} | {{序号}}`，已按真实综合延迟平稳度全局升序排列。*
+*注：节点命名规则为 `{{地区中文名}} | {{纯净/优选/普通}}·{{原生/广播}} | {{序号}}`，已按综合质量评分降序排列。*
 """
+
+
+def save_local_metrics(
+    *,
+    raw_count: int,
+    dedup_count: int,
+    prefiltered_count: int,
+    alive_count: int,
+    verified_count: int,
+    final_records: List[Dict[str, Any]],
+    push_triggered: bool,
+    push_reason: str,
+    elapsed_s: float,
+) -> None:
+    """原子化保存本地运行指标到 /opt/clash-filter/last_run_metrics.json。"""
+    try:
+        METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        origin_counts = Counter(r.get("ip_origin", "未知") for r in final_records)
+        tier_counts = Counter(r.get("tier", "普通") for r in final_records)
+        payload = {
+            "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
+            "elapsed_s": round(elapsed_s, 1),
+            "raw_count": raw_count,
+            "dedup_count": dedup_count,
+            "prefiltered_count": prefiltered_count,
+            "alive_count": alive_count,
+            "verified_count": verified_count,
+            "final_count": len(final_records),
+            "native_count": origin_counts.get("原生", 0),
+            "broadcast_count": origin_counts.get("广播", 0),
+            "pure_count": tier_counts.get("纯净", 0),
+            "premium_count": tier_counts.get("优选", 0),
+            "google_clean_count": sum(1 for r in final_records if r.get("google_clean")),
+            "gemini_clean_count": sum(1 for r in final_records if r.get("gemini_clean")),
+            "push_triggered": bool(push_triggered),
+            "push_reason": push_reason,
+        }
+        _atomic_write_text(
+            METRICS_FILE,
+            json.dumps(payload, ensure_ascii=False, indent=2),
+        )
+    except Exception as exc:
+        log.warning("保存本地运行指标异常: %s", exc)
 
 
 def atomic_push_to_github(
@@ -1727,10 +2009,13 @@ def atomic_push_to_github(
     raw_count: int,
     dedup_count: int,
     alive_count: int,
-    old_historical_proxies: List[Dict[str, Any]],
-    old_meta: Dict[str, Any],
 ) -> None:
-    """在 /tmp/out_repo 初始化单 commit 孤儿分支并原子化强推至 GitHub nodes 分支。"""
+    """
+    在 /tmp/out_repo 初始化单 commit 孤儿分支并原子化强推至 GitHub nodes 分支，
+    同时同步更新 main 分支的 cmfa-merged-config.yaml (单平铺 PROXY + 漏网之鱼 布局)。
+    直连 SSH 受阻时自动切换至 ssh.github.com:443，再受阻则按需启动 BootstrapProxyManager
+    + Python3 ProxyCommand，并完成 jsDelivr CDN 缓存刷新。
+    """
     update_time_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
 
     final_proxies = [r["proxy"] for r in final_records]
@@ -1751,102 +2036,145 @@ def atomic_push_to_github(
     )
     (TMP_OUT_REPO / "README.md").write_text(readme_content, encoding="utf-8")
 
-    git_env = {
-        **os.environ,
-        "GIT_SSH_COMMAND": f"ssh -i {GIT_SSH_KEY} -o StrictHostKeyChecking=accept-new -o BatchMode=yes",
-    }
-
-    def run_git(args: List[str]) -> None:
+    def run_git(args: List[str], cwd: Path, git_env: Dict[str, str], timeout: int = 90) -> None:
         res = subprocess.run(
             ["git", *args],
-            cwd=str(TMP_OUT_REPO),
+            cwd=str(cwd),
             env=git_env,
             capture_output=True,
             text=True,
-            timeout=120,
+            timeout=timeout,
         )
         if res.returncode != 0:
             raise RuntimeError(f"git {' '.join(args)} 失败:\nSTDOUT: {res.stdout}\nSTDERR: {res.stderr}")
 
     log.info("初始化孤儿分支并原子化强推至 %s (%s)...", GIT_REMOTE_URL, GIT_BRANCH)
-    run_git(["init", "-b", GIT_BRANCH])
-    run_git(["config", "user.name", GIT_USER_NAME])
-    run_git(["config", "user.email", GIT_USER_EMAIL])
-    run_git(["add", "proxies.yaml", "README.md"])
-    run_git(["commit", "-m", f"chore: auto update live nodes ({update_time_utc})"])
-    run_git(["remote", "add", "origin", GIT_REMOTE_URL])
-    run_git(["push", "--force", "origin", GIT_BRANCH])
-    log.info("🎉 推送完成！(%s, 共发布 %d 个节点至 nodes 分支)", update_time_utc, len(final_proxies))
+    base_env = dict(os.environ)
+    run_git(["init", "-b", GIT_BRANCH], TMP_OUT_REPO, base_env)
+    run_git(["config", "user.name", GIT_USER_NAME], TMP_OUT_REPO, base_env)
+    run_git(["config", "user.email", GIT_USER_EMAIL], TMP_OUT_REPO, base_env)
+    run_git(["add", "proxies.yaml", "README.md"], TMP_OUT_REPO, base_env)
+    run_git(["commit", "-m", f"chore: auto update live nodes ({update_time_utc})"], TMP_OUT_REPO, base_env)
+    run_git(["remote", "add", "origin", GIT_REMOTE_URL], TMP_OUT_REPO, base_env)
 
-    # 2. 同步更新 main 分支主配置 cmfa-merged-config.yaml（节点直接内嵌，杜绝 proxy-providers 套娃）
-    try:
-        main_repo_dir = TMP_DIR / "main_repo"
-        if main_repo_dir.exists():
-            shutil.rmtree(main_repo_dir, ignore_errors=True)
-        log.info("拉取 main 分支以同步内嵌最新节点...")
-        res = subprocess.run(
-            ["git", "clone", "-b", "main", "--depth", "1", GIT_REMOTE_URL, str(main_repo_dir)],
-            env=git_env, capture_output=True, text=True, timeout=60
-        )
-        if res.returncode == 0:
-            config_file = main_repo_dir / "cmfa-merged-config.yaml"
-            if config_file.exists():
-                with config_file.open("r", encoding="utf-8") as f:
-                    main_cfg = yaml.load(f, Loader=YamlLoader)
-                if isinstance(main_cfg, dict):
-                    if "proxy-providers" in main_cfg:
-                        del main_cfg["proxy-providers"]
-                    main_cfg["proxies"] = final_proxies
-                    # 极简平铺策略组，无国家组、无自动测速组、无 compatible
-                    main_cfg["proxy-groups"] = [
-                        {
-                            "name": "PROXY",
-                            "type": "select",
-                            "include-all": True,
-                            "proxies": ["DIRECT"],
-                        },
-                        {
-                            "name": "漏网之鱼",
-                            "type": "select",
-                            "proxies": ["PROXY", "DIRECT"],
-                        },
-                    ]
-                    with config_file.open("w", encoding="utf-8") as f:
-                        yaml.dump(main_cfg, f, Dumper=YamlDumper, allow_unicode=True, sort_keys=False)
+    def _sync_main_branch(git_env: Dict[str, str]) -> None:
+        main_repo_dir = TMP_MAIN_REPO
+        try:
+            if main_repo_dir.exists():
+                shutil.rmtree(main_repo_dir, ignore_errors=True)
+            log.info("拉取 main 分支以同步内嵌最新节点...")
+            res = subprocess.run(
+                ["git", "clone", "-b", "main", "--depth", "1", GIT_REMOTE_URL, str(main_repo_dir)],
+                env=git_env, capture_output=True, text=True, timeout=60,
+            )
+            if res.returncode == 0:
+                config_file = main_repo_dir / "cmfa-merged-config.yaml"
+                if config_file.exists():
+                    with config_file.open("r", encoding="utf-8") as f:
+                        main_cfg = yaml.load(f, Loader=YamlLoader)
+                    if isinstance(main_cfg, dict):
+                        if "proxy-providers" in main_cfg:
+                            del main_cfg["proxy-providers"]
+                        main_cfg["proxies"] = final_proxies
+                        # 极简平铺策略组，无国家组、无自动测速组、无 compatible
+                        main_cfg["proxy-groups"] = [
+                            {
+                                "name": "PROXY",
+                                "type": "select",
+                                "include-all": True,
+                                "proxies": ["DIRECT"],
+                            },
+                            {
+                                "name": "漏网之鱼",
+                                "type": "select",
+                                "proxies": ["PROXY", "DIRECT"],
+                            },
+                        ]
+                        with config_file.open("w", encoding="utf-8") as f:
+                            yaml.dump(main_cfg, f, Dumper=YamlDumper, allow_unicode=True, sort_keys=False)
 
-                    subprocess.run(["git", "config", "user.name", GIT_USER_NAME], cwd=str(main_repo_dir), env=git_env)
-                    subprocess.run(["git", "config", "user.email", GIT_USER_EMAIL], cwd=str(main_repo_dir), env=git_env)
-                    subprocess.run(["git", "add", "cmfa-merged-config.yaml"], cwd=str(main_repo_dir), env=git_env)
-                    commit_res = subprocess.run(
-                        ["git", "commit", "-m", f"chore: sync live embedded nodes ({update_time_utc})"],
-                        cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True
-                    )
-                    if commit_res.returncode == 0:
-                        push_res = subprocess.run(
-                            ["git", "push", "origin", "main"],
-                            cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True, timeout=60
+                        run_git(["config", "user.name", GIT_USER_NAME], main_repo_dir, git_env)
+                        run_git(["config", "user.email", GIT_USER_EMAIL], main_repo_dir, git_env)
+                        run_git(["add", "cmfa-merged-config.yaml"], main_repo_dir, git_env)
+                        commit_res = subprocess.run(
+                            ["git", "commit", "-m", f"chore: sync live embedded nodes ({update_time_utc})"],
+                            cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
                         )
-                        if push_res.returncode == 0:
-                            log.info("🎉 main 分支主配置 (cmfa-merged-config.yaml) 内嵌节点同步推送成功！")
-        if main_repo_dir.exists():
-            shutil.rmtree(main_repo_dir, ignore_errors=True)
-    except Exception as exc:
-        log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
+                        if commit_res.returncode == 0:
+                            push_res = subprocess.run(
+                                ["git", "push", "origin", "main"],
+                                cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True, timeout=60,
+                            )
+                            if push_res.returncode == 0:
+                                log.info("🎉 main 分支主配置 (cmfa-merged-config.yaml) 内嵌节点同步推送成功！")
+        except Exception as exc:
+            log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
+        finally:
+            if main_repo_dir.exists():
+                shutil.rmtree(main_repo_dir, ignore_errors=True)
 
-    # 核心保障：使用 3 振出局与容错缓冲算法，更新本地历史保活池
-    update_and_save_historical_pool(
-        current_verified_proxies=final_proxies,
-        old_historical_proxies=old_historical_proxies,
-        old_meta=old_meta,
-    )
+    with BootstrapProxyManager(
+        saved_pool_file=HISTORICAL_POOL_FILE,
+        bin_mihomo=BIN_MIHOMO,
+        tmp_dir=TMP_DIR,
+        preloaded_proxies=final_proxies,
+    ) as bpm:
+        pushed = False
+        used_env_params: Tuple[Optional[str], bool] = (None, False)
+        last_err: Optional[Exception] = None
 
-    # 自动刷新 jsdelivr 全球 CDN 边缘缓存，确保国内免代理客户端秒级拉取最新节点
-    try:
-        requests.get("https://purge.jsdelivr.net/gh/Komeiji6/Clash-config@nodes/proxies.yaml", timeout=10)
-        requests.get("https://purge.jsdelivr.net/gh/Komeiji6/Clash-config@main/cmfa-merged-config.yaml", timeout=10)
-        log.info("已自动触发 jsdelivr CDN 缓存刷新。")
-    except Exception as exc:
-        log.warning("触发 jsdelivr 缓存刷新失败 (不影响推送): %s", exc)
+        # 依次尝试: 1) 直连 SSH:22 -> 2) 直连 ssh.github.com:443 -> 3) BootstrapProxy + Python3 ProxyCommand
+        attempts: List[Tuple[str, bool, bool]] = [
+            ("direct_ssh_22", False, False),
+            ("direct_ssh_443", False, True),
+            ("proxy_ssh_443", True, True),
+        ]
+        for label, need_proxy, use_443 in attempts:
+            proxy_url: Optional[str] = None
+            if need_proxy:
+                proxy_url = bpm.ensure_started()
+                if not proxy_url:
+                    log.warning("[Git Push] 无法启动 BootstrapProxy，跳过 %s", label)
+                    continue
+            try:
+                with git_ssh_env(
+                    GIT_SSH_KEY,
+                    proxy_url=proxy_url,
+                    tmp_dir=TMP_DIR,
+                    use_ssh_443=use_443,
+                ) as g_env:
+                    run_git(["push", "--force", "origin", GIT_BRANCH], TMP_OUT_REPO, g_env, timeout=90)
+                    pushed = True
+                    used_env_params = (proxy_url, use_443)
+                    log.info("🎉 推送完成 (%s)！(%s, 共发布 %d 个节点至 nodes 分支)",
+                             label, update_time_utc, len(final_proxies))
+                    _sync_main_branch(g_env)
+                    break
+            except Exception as exc:
+                last_err = exc
+                log.warning("[Git Push] %s 推送失败: %s", label, str(exc)[:300])
+
+        if not pushed:
+            raise RuntimeError(f"所有 Git 推送方式均失败: {last_err}")
+
+        # 推送成功后更新 push_state.json
+        save_push_state(
+            final_records,
+            state_file=PUSH_STATE_FILE,
+            get_fingerprint_fn=get_proxy_fingerprint,
+        )
+
+        # 自动刷新 jsDelivr 全球 CDN 边缘缓存 (直连失败时自动回退至代理)
+        try:
+            purge_res = purge_jsdelivr_urls(
+                proxy_url=used_env_params[0],
+                proxy_manager=bpm,
+                timeout=10.0,
+            )
+            ok_cnt = sum(1 for v in purge_res.values() if v.get("ok"))
+            log.info("jsDelivr CDN 缓存刷新完成 (%d/%d 成功): %s", ok_cnt, len(purge_res), purge_res)
+        except Exception as exc:
+            log.warning("触发 jsDelivr 缓存刷新失败 (不影响推送): %s", exc)
 
 
 # ======================== 主流程入口 ========================
@@ -1862,35 +2190,37 @@ def main() -> int:
         cleanup_tmp()
         ensure_system_time_and_network()
 
-        # 1. 全量拉取上游与去重并回流历史节点池
+        # 1. Stage 0 + Stage 0.5: 上游拉取 (含直连/镜像/按需引导代理) + 去重 + TCP SYN 预筛
         proxies, raw_count, dedup_count, old_hist_proxies, old_hist_meta = fetch_and_dedup()
-        if dedup_count < MIN_SAFEGUARD_NODES:
-            log.critical("[熔断保护] 上游有效节点仅 %d 个 (< %d)，终止发布！",
-                         dedup_count, MIN_SAFEGUARD_NODES)
+        prefiltered_count = len(proxies)
+        if prefiltered_count < MIN_SAFEGUARD_NODES:
+            log.critical("[熔断保护] Stage 0.5 后有效待测节点仅 %d 个 (< %d)，终止发布！",
+                         prefiltered_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 2. 全量高并发握手测速初筛 (<= 1000ms)
+        # 2. Stage 1 + Stage 1.5: 全量并发握手初筛 + 多轮采样抖动精测
         alive_records = run_stage1_fast_delay_filter(proxies)
         del proxies
         gc.collect()
 
         alive_count = len(alive_records)
         if alive_count < MIN_SAFEGUARD_NODES:
-            log.critical("[熔断保护] 1000ms 内有效存活仅 %d 个节点 (< %d)，终止发布！",
+            log.critical("[熔断保护] Stage 1.5 后稳定存活仅 %d 个节点 (< %d)，终止发布！",
                          alive_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 3. 落地 IP 属性与品质判定
+        # 3. Stage 2: 落地 IP 原生/广播判定、Google/Gemini 纯净度与微测速
         verified_records = run_stage2_exit_detection(alive_records)
         del alive_records
         gc.collect()
 
-        if len(verified_records) < MIN_SAFEGUARD_NODES:
+        verified_count = len(verified_records)
+        if verified_count < MIN_SAFEGUARD_NODES:
             log.critical("[熔断保护] 落地通过节点仅 %d 个 (< %d)，终止发布！",
-                         len(verified_records), MIN_SAFEGUARD_NODES)
+                         verified_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 4. 策略组分桶、单组上限 20 截取与重命名
+        # 4. Stage 4: 综合评分排序、容量封顶与重命名 (保持单平铺 PROXY + 漏网之鱼)
         final_records = bucket_and_limit_nodes(verified_records)
         del verified_records
         gc.collect()
@@ -1900,17 +2230,53 @@ def main() -> int:
                          len(final_records), MIN_SAFEGUARD_NODES)
             return 1
 
-        # 5. 原子化强推至 GitHub nodes 分支并更新历史保活池
-        atomic_push_to_github(
-            final_records=final_records,
-            raw_count=raw_count,
-            dedup_count=dedup_count,
-            alive_count=alive_count,
+        final_proxies = [r["proxy"] for r in final_records]
+
+        # 5. Stage 5a: 无论是否触发 Git 推送，均先更新本地历史保活池
+        update_and_save_historical_pool(
+            current_verified_proxies=final_proxies,
             old_historical_proxies=old_hist_proxies,
             old_meta=old_hist_meta,
         )
 
+        # 6. Stage 5b: 滚动推送门控判断
+        should_push, push_reason, push_metrics = should_push_rolling_update(
+            final_records,
+            state_file=PUSH_STATE_FILE,
+            get_fingerprint_fn=get_proxy_fingerprint,
+        )
+        if should_push:
+            summary_metrics = {
+                k: push_metrics[k]
+                for k in (
+                    "prev_count", "curr_count", "node_count", "turnover_ratio",
+                    "sym_diff_count", "high_tier_churn", "elapsed_sec", "proxies_hash",
+                )
+                if k in push_metrics
+            }
+            log.info("🚀 [Rolling Gate] 满足推送条件 (%s): %s", push_reason, summary_metrics)
+            atomic_push_to_github(
+                final_records=final_records,
+                raw_count=raw_count,
+                dedup_count=dedup_count,
+                alive_count=alive_count,
+            )
+        else:
+            log.info("⏭️ [Rolling Gate] 跳过 Git 推送与 CDN 刷新 (%s), 本地历史池与指标已更新。", push_reason)
+
         elapsed = time.monotonic() - start_ts
+        save_local_metrics(
+            raw_count=raw_count,
+            dedup_count=dedup_count,
+            prefiltered_count=prefiltered_count,
+            alive_count=alive_count,
+            verified_count=verified_count,
+            final_records=final_records,
+            push_triggered=should_push,
+            push_reason=push_reason,
+            elapsed_s=elapsed,
+        )
+
         log.info("========== 全部流程圆满执行完成，总耗时 %.1f 秒 ==========", elapsed)
         return 0
 
