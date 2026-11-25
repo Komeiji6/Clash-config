@@ -54,6 +54,7 @@ from node_quality import (
     audit_stage1_node,
     create_probe_session,
     evaluate_node_quality,
+    load_push_state,
     proxy_fingerprint,
     save_push_state,
     score_and_rank_nodes,
@@ -71,12 +72,12 @@ except AttributeError:
 # ======================== 核心配置参数 ========================
 
 def _gh_mirrors(owner: str, repo: str, branch: str, path: str) -> List[str]:
-    """生成 GitHub 订阅源的多镜像故障转移列表 (jsDelivr CDN -> ghfast 国内加速 -> raw 直连)。"""
+    """生成 GitHub 订阅源的多镜像故障转移列表 (raw 实时最新 -> ghfast 国内加速 -> jsDelivr CDN 兜底)。"""
     raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
     return [
-        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}",
-        f"https://ghfast.top/{raw_url}",
         raw_url,
+        f"https://ghfast.top/{raw_url}",
+        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}",
     ]
 
 
@@ -137,15 +138,16 @@ GIT_USER_NAME = "OpenStick-410"
 GIT_USER_EMAIL = "openstick@local"
 GIT_SSH_KEY = "/root/.ssh/id_ed25519"
 
-# 端口与并发规划
+# 端口与并发规划 (基于高通 410 真机实测甜点区间：兼顾无拥塞延迟准确度与整体运行时长)
 STAGE1_API_PORT = 19999
-STAGE1_CONCURRENCY = 20         # 初筛并发 20（适配 410 的 2.4G 射频硬件，杜绝拥塞误杀）
+STAGE1_CONCURRENCY = 10         # 实测 8~12 并发区间延迟无拥塞且速率达 ~5.4+/s (20 并发出现射频拥塞跳升)
+STAGE15_CONCURRENCY = 2         # Stage 1.5 低载复测并发 2 (无排队畸变，速度较串行翻倍)
 STAGE2_API_PORT = 19090
 STAGE2_BASE_PORT = 18080
-STAGE2_CONCURRENCY = 3          # 落地 IP 检测并发数 (3 路独立 Session)
+STAGE2_CONCURRENCY = 2          # 实测 2 并发下载中位速率最佳 (~760kbps vs 单路 660kbps / 3路拥塞下降)，且耗时减半
 STAGE2_RELAY_PORT = STAGE2_BASE_PORT + STAGE2_CONCURRENCY  # Stage 2 内部应急中继端口
-STAGE05_TCP_CONCURRENCY = 64    # Stage 0.5 异步 TCP SYN 预筛并发
-STAGE05_TCP_TIMEOUT = 1.8
+STAGE05_TCP_CONCURRENCY = 48    # 纯 TCP SYN 连通性预筛不影响延迟，48 并发约 50~60s 完成且不超 FD 上限
+STAGE05_TCP_TIMEOUT = 2.2       # 2.2s 超时兼顾跨洋冷 DNS 与总体预筛速度
 MIN_DIRECT_UPSTREAM_NODES = 150 # 低于该阈值时触发 BootstrapProxy 补拉失败源
 
 # 本地机密配置文件 (仅保存在棒子本地 /opt/clash-filter/secrets.json，严禁提交至公共仓库)
@@ -165,7 +167,9 @@ IPAPI_IS_KEY = _SECRETS.get("ipapi_is_key", os.getenv("IPAPI_IS_KEY", ""))
 
 # 策略组容量上限与阈值
 MAX_NODES_PER_GROUP = 50        # 平铺 PROXY 策略组最多保留 50 个精选节点
-STAGE2_MAX_CANDIDATES = 75      # Stage 1.5 -> Stage 2 候选上限，保障整轮耗时稳定在 9~12 分钟内
+STAGE2_MAX_CANDIDATES = 70      # Stage 2 2 并发下 70 候选可在 ~3 分钟内测完
+STAGE2_RESERVED_HIGH_TIER = 25  # Stage 2 截断前优先为已知历史高优/非代理/原生节点预留的保送名额
+STAGE2_PRIORITY_MAX_DELAY_MS = 1600
 HANDSHAKE_TIMEOUT_MS = 3500     # 握手超时 3500ms（兼顾亚太极速与欧美跨洋优质节点，杜绝抖动误杀）
 PREMIUM_MAX_LATENCY_MS = 800    # 「优选」延迟上限 800ms
 STAGE2_SPEEDTEST_BYTES = DEFAULT_SPEEDTEST_BYTES  # 131072 (128 KiB)
@@ -484,12 +488,12 @@ def update_and_save_historical_pool(
                 "first_seen": prev_entry.get("first_seen", now_utc_str),
                 "last_success": prev_entry.get("last_success", "unknown"),
             }
-            log.info("历史节点 [%s] 本轮偶发失联 (容错缓冲 %d/%d)，保留待下次复试",
-                     old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
+            log.debug("历史节点 [%s] 本轮偶发失联 (容错缓冲 %d/%d)，保留待下次复试",
+                      old_p.get("name", fp[:24]), curr_fails, HISTORICAL_MAX_STRIKES)
         else:
             purged_count += 1
-            log.info("历史节点 [%s] 连续 %d 次测速失联，正式从历史池淘汰注销",
-                     old_p.get("name", fp[:24]), curr_fails)
+            log.debug("历史节点 [%s] 连续 %d 次测速失联，正式从历史池淘汰注销",
+                      old_p.get("name", fp[:24]), curr_fails)
 
     # 3. 合并：当前实测活节点 + 容错保护节点
     combined_pool: List[Dict[str, Any]] = list(current_verified_proxies) + preserved_grace_proxies
@@ -547,6 +551,19 @@ def safe_b64decode(s: str) -> str:
             return ""
 
 
+def _is_valid_reality_short_id(sid: str) -> bool:
+    """Mihomo Reality 支持 0..16 位偶数长度十六进制 short-id (如 2/4/8/12/16 位)。"""
+    return len(sid) <= 16 and len(sid) % 2 == 0 and all(c in "0123456789abcdefABCDEF" for c in sid)
+
+
+def _qs_truthy(qs: Dict[str, List[str]], *keys: str) -> bool:
+    for k in keys:
+        val = str(qs.get(k, [""])[0]).strip().lower()
+        if val in ("1", "true", "yes"):
+            return True
+    return False
+
+
 def parse_vmess(link: str) -> Optional[Dict[str, Any]]:
     """解析标准 vmess://<base64_json> 节点为 Clash 字典。"""
     raw = link[8:].strip()
@@ -561,33 +578,43 @@ def parse_vmess(link: str) -> Optional[Dict[str, Any]]:
         if not server or not port or not uuid:
             return None
         name = str(data.get("ps", f"vmess_{server}")).strip()
-        p = {
+        p: Dict[str, Any] = {
             "name": name,
             "type": "vmess",
             "server": server,
             "port": port,
             "uuid": uuid,
             "alterId": int(data.get("aid", 0)),
-            "cipher": str(data.get("scy", "auto")),
+            "cipher": str(data.get("scy") or "auto"),
             "udp": True,
         }
-        tls = str(data.get("tls", "")).lower()
+        tls_raw = str(data.get("tls", "")).strip().lower()
         sni = str(data.get("sni", "")).strip()
-        if tls == "tls":
+        host_hdr = str(data.get("host", "")).strip()
+        if tls_raw in ("tls", "true", "1"):
             p["tls"] = True
-            if sni:
-                p["servername"] = sni
+            if sni or host_hdr:
+                p["servername"] = sni or host_hdr
+        if str(data.get("verify_cert", "")).lower() in ("false", "0") or str(data.get("allowInsecure", "")).lower() in ("true", "1"):
+            p["skip-cert-verify"] = True
         net = str(data.get("net", "tcp")).lower()
         if net == "ws":
             p["network"] = "ws"
-            p["ws-opts"] = {
-                "path": str(data.get("path", "/")),
-                "headers": {"Host": str(data.get("host", sni or server))},
-            }
+            ws_opts: Dict[str, Any] = {"path": str(data.get("path") or "/")}
+            effective_host = host_hdr or sni or server
+            if effective_host:
+                ws_opts["headers"] = {"Host": effective_host}
+            p["ws-opts"] = ws_opts
         elif net == "grpc":
             p["network"] = "grpc"
             p["grpc-opts"] = {
                 "grpc-service-name": str(data.get("path", "")),
+            }
+        elif net == "h2":
+            p["network"] = "h2"
+            p["h2-opts"] = {
+                "path": str(data.get("path") or "/"),
+                "host": [host_hdr or sni or server],
             }
         return p
     except Exception:
@@ -598,14 +625,14 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
     """解析标准 vless://<uuid>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
     try:
         u = urllib.parse.urlparse(link)
-        uuid = u.username
+        uuid = urllib.parse.unquote(u.username or "")
         host = u.hostname
         port = u.port
         if not uuid or not host or not port:
             return None
         name = urllib.parse.unquote(u.fragment) if u.fragment else f"vless_{host}"
         qs = urllib.parse.parse_qs(u.query)
-        p = {
+        p: Dict[str, Any] = {
             "name": name,
             "type": "vless",
             "server": host,
@@ -613,10 +640,10 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
             "uuid": uuid,
             "udp": True,
         }
-        sec = qs.get("security", [""])[0].lower()
-        sni = qs.get("sni", [""])[0]
-        fp = qs.get("fp", [""])[0]
-        flow = qs.get("flow", [""])[0]
+        sec = qs.get("security", [""])[0].strip().lower()
+        sni = urllib.parse.unquote(qs.get("sni", [""])[0]).strip()
+        fp = qs.get("fp", [""])[0].strip()
+        flow = qs.get("flow", [""])[0].strip()
         if sec in ("tls", "reality"):
             p["tls"] = True
             if sni:
@@ -626,41 +653,44 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
             if flow:
                 p["flow"] = flow
             if sec == "reality":
-                pbk = qs.get("pbk", [""])[0].strip()
+                pbk = urllib.parse.unquote(qs.get("pbk", [""])[0]).strip()
                 sid = qs.get("sid", [""])[0].strip()
-                if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
+                if not _is_valid_reality_short_id(sid):
                     sid = ""
                 if pbk:
                     p["reality-opts"] = {
                         "public-key": pbk,
                         "short-id": sid,
                     }
-        net = qs.get("type", ["tcp"])[0].lower()
+        net = qs.get("type", ["tcp"])[0].strip().lower()
         alpn_raw = qs.get("alpn", [""])[0]
         if alpn_raw:
-            p["alpn"] = [a.strip() for a in alpn_raw.split(",") if a.strip()]
-        if qs.get("allowInsecure", ["0"])[0] in ("1", "true"):
+            p["alpn"] = [a.strip() for a in urllib.parse.unquote(alpn_raw).split(",") if a.strip()]
+        if _qs_truthy(qs, "allowInsecure", "allow_insecure", "insecure"):
             p["skip-cert-verify"] = True
         enc = qs.get("encryption", [""])[0].strip()
         if enc and enc.lower() != "none":
             p["encryption"] = enc
         if net == "ws":
             p["network"] = "ws"
-            path = qs.get("path", ["/"])[0]
-            ws_host = qs.get("host", [""])[0] or sni or host
+            path = urllib.parse.unquote(qs.get("path", ["/"])[0] or "/")
+            ws_host = urllib.parse.unquote(qs.get("host", [""])[0]).strip() or sni or host
             p["ws-opts"] = {"path": path, "headers": {"Host": ws_host}}
         elif net == "grpc":
             p["network"] = "grpc"
-            service_name = qs.get("serviceName", [""])[0]
+            service_name = urllib.parse.unquote(qs.get("serviceName", [""])[0])
             p["grpc-opts"] = {"grpc-service-name": service_name}
         elif net in ("xhttp", "splithttp"):
             p["network"] = "xhttp"
-            path = qs.get("path", ["/"])[0]
-            x_host = qs.get("host", [""])[0] or sni or host
+            path = urllib.parse.unquote(qs.get("path", ["/"])[0] or "/")
+            x_host = urllib.parse.unquote(qs.get("host", [""])[0]).strip() or sni or host
             p["xhttp-opts"] = {"path": path, "host": x_host, "mode": qs.get("mode", ["auto"])[0]}
         elif net == "h2":
             p["network"] = "h2"
-            p["h2-opts"] = {"path": qs.get("path", ["/"])[0], "host": [qs.get("host", [""])[0] or sni or host]}
+            p["h2-opts"] = {
+                "path": urllib.parse.unquote(qs.get("path", ["/"])[0] or "/"),
+                "host": [urllib.parse.unquote(qs.get("host", [""])[0]).strip() or sni or host],
+            }
         return p
     except Exception:
         return None
@@ -670,15 +700,15 @@ def parse_trojan(link: str) -> Optional[Dict[str, Any]]:
     """解析标准 trojan://<password>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
     try:
         u = urllib.parse.urlparse(link)
-        password = u.username or u.password
+        password = urllib.parse.unquote(u.username or u.password or "")
         host = u.hostname
         port = u.port
         if not password or not host or not port:
             return None
         name = urllib.parse.unquote(u.fragment) if u.fragment else f"trojan_{host}"
         qs = urllib.parse.parse_qs(u.query)
-        sni = qs.get("sni", [""])[0]
-        p = {
+        sni = urllib.parse.unquote(qs.get("sni", [""])[0]).strip()
+        p: Dict[str, Any] = {
             "name": name,
             "type": "trojan",
             "server": host,
@@ -688,33 +718,59 @@ def parse_trojan(link: str) -> Optional[Dict[str, Any]]:
         }
         if sni:
             p["sni"] = sni
+        fp = qs.get("fp", [""])[0].strip()
+        if fp:
+            p["client-fingerprint"] = fp
+        alpn_raw = qs.get("alpn", [""])[0]
+        if alpn_raw:
+            p["alpn"] = [a.strip() for a in urllib.parse.unquote(alpn_raw).split(",") if a.strip()]
+        if _qs_truthy(qs, "allowInsecure", "allow_insecure", "insecure"):
+            p["skip-cert-verify"] = True
+        net = qs.get("type", ["tcp"])[0].strip().lower()
+        if net == "ws":
+            p["network"] = "ws"
+            path = urllib.parse.unquote(qs.get("path", ["/"])[0] or "/")
+            ws_host = urllib.parse.unquote(qs.get("host", [""])[0]).strip() or sni or host
+            p["ws-opts"] = {"path": path, "headers": {"Host": ws_host}}
+        elif net == "grpc":
+            p["network"] = "grpc"
+            p["grpc-opts"] = {"grpc-service-name": urllib.parse.unquote(qs.get("serviceName", [""])[0])}
         return p
     except Exception:
         return None
 
 
 def parse_ss(link: str) -> Optional[Dict[str, Any]]:
-    """解析 Shadowsocks 原生链接 (支持标准 Base64 及 SIP002 规范)。"""
+    """解析 Shadowsocks 原生链接 (支持标准 Base64、SIP002、IPv6 及 /?plugin= 后缀)。"""
     try:
         u = urllib.parse.urlparse(link)
         name = urllib.parse.unquote(u.fragment) if u.fragment else f"ss_{u.hostname or 'node'}"
-        if "@" in u.netloc:
-            userinfo, hostport = u.netloc.split("@", 1)
-            decoded_user = safe_b64decode(userinfo)
+        if "@" in u.netloc and u.hostname and u.port:
+            userinfo = u.username or ""
+            decoded_user = safe_b64decode(urllib.parse.unquote(userinfo))
             if ":" in decoded_user:
                 method, password = decoded_user.split(":", 1)
+            elif u.password is not None:
+                method = urllib.parse.unquote(userinfo)
+                password = urllib.parse.unquote(u.password)
             else:
                 return None
-            host, port_str = hostport.split(":", 1)
-            port = int(port_str.split("?")[0])
+            host = u.hostname
+            port = int(u.port)
         else:
-            decoded = safe_b64decode(u.netloc)
+            raw_body = link[5:].split("#", 1)[0].split("?", 1)[0].rstrip("/")
+            decoded = safe_b64decode(raw_body)
             if "@" not in decoded:
                 return None
-            cred, hostport = decoded.split("@", 1)
+            cred, hostport = decoded.rsplit("@", 1)
             method, password = cred.split(":", 1)
-            host, port_str = hostport.split(":", 1)
-            port = int(port_str.split("?")[0])
+            hostport_clean = hostport.split("/", 1)[0].split("?", 1)[0].strip()
+            if hostport_clean.startswith("[") and "]:" in hostport_clean:
+                host_part, port_str = hostport_clean[1:].split("]:", 1)
+                host = host_part.strip()
+            else:
+                host, port_str = hostport_clean.rsplit(":", 1)
+            port = int(port_str)
 
         return {
             "name": name,
@@ -882,6 +938,7 @@ def parse_base64_payload(text: str) -> List[Dict[str, Any]]:
 # 记录每个节点指纹首次归属的上游来源与原始名称（仅内存中用于统计与国家兜底，绝不写入配置）
 _SOURCE_BY_FP: Dict[str, str] = {}
 _RAW_NAME_BY_FP: Dict[str, str] = {}
+_PRIORITY_HISTORICAL_FPS: Set[str] = set()
 
 VALID_SS_CIPHERS = {
     "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
@@ -913,13 +970,17 @@ def _parse_upstream_payload(source_name: str, text: str) -> List[Dict[str, Any]]
 
 
 def _fetch_single_source_group(idx_and_item: Tuple[int, Tuple[str, List[str]]]) -> Tuple[int, str, List[Dict[str, Any]]]:
-    """直连拉取单个上游源（带镜像故障转移）。"""
+    """直连拉取单个上游源（带防缓存请求头与多镜像故障转移，优先拉取最新 raw）。"""
     order_idx, (source_name, urls) = idx_and_item
-    headers = {"User-Agent": "ClashMeta/1.19.34"}
+    headers = {
+        "User-Agent": "ClashMeta/1.19.34",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
     with create_probe_session(None, pool_size=2, user_agent="ClashMeta/1.19.34") as session:
         for url in urls:
             try:
-                resp = session.get(url, headers=headers, timeout=12)
+                resp = session.get(url, headers=headers, timeout=(4.0, 8.0))
                 resp.raise_for_status()
                 proxies_list = _parse_upstream_payload(source_name, resp.text)
                 if proxies_list:
@@ -991,7 +1052,7 @@ def _sanitize_proxy_options(proxy: Dict[str, Any]) -> bool:
             return False
         ro["public-key"] = pbk
         sid = str(ro.get("short-id", "")).strip()
-        if len(sid) != 16 or not all(c in "0123456789abcdefABCDEF" for c in sid):
+        if not _is_valid_reality_short_id(sid):
             ro["short-id"] = ""
         else:
             ro["short-id"] = sid
@@ -1135,11 +1196,12 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
     """
     _SOURCE_BY_FP.clear()
     _RAW_NAME_BY_FP.clear()
+    _PRIORITY_HISTORICAL_FPS.clear()
 
     all_sources = build_merged_sources(UPSTREAM_SOURCES, RECOMMENDED_EXTRA_SOURCES)
     fetched_groups: List[Tuple[int, str, List[Dict[str, Any]]]] = []
 
-    with ThreadPoolExecutor(max_workers=4) as pool:
+    with ThreadPoolExecutor(max_workers=3) as pool:
         futures = [pool.submit(_fetch_single_source_group, (i, item)) for i, item in enumerate(all_sources)]
         for f in as_completed(futures):
             fetched_groups.append(f.result())
@@ -1187,14 +1249,30 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         for p in plist:
             tagged_raw_proxies.append((source_name, p))
 
-    # 核心保障：自动回流历史存活节点池（带容错元数据）
+    # 核心保障：自动回流历史存活节点池（带容错元数据与历史纯净/原生高优指纹标记）
     old_historical_proxies, old_meta = load_historical_pool()
     historical_fps: Set[str] = set()
     if old_historical_proxies:
         for p in old_historical_proxies:
-            historical_fps.add(get_proxy_fingerprint(p))
+            fp = get_proxy_fingerprint(p)
+            historical_fps.add(fp)
+            hist_name = str(p.get("name") or old_meta.get(fp, {}).get("name") or "")
+            if any(tok in hist_name for tok in ("非代理", "未标代理", "纯净", "原生")) and "已标" not in hist_name:
+                _PRIORITY_HISTORICAL_FPS.add(fp)
             tagged_raw_proxies.append(("历史保活池", p))
         log.info("成功回流历史保活节点池: %d 个 (进入保活复测队列)", len(old_historical_proxies))
+
+    try:
+        prev_push = load_push_state(PUSH_STATE_FILE)
+        if isinstance(prev_push, dict):
+            for fp in (prev_push.get("high_tier_fingerprints") or []):
+                if fp:
+                    _PRIORITY_HISTORICAL_FPS.add(str(fp))
+            for fp in (prev_push.get("top_fingerprints") or []):
+                if fp:
+                    _PRIORITY_HISTORICAL_FPS.add(str(fp))
+    except Exception:
+        pass
 
     if not tagged_raw_proxies:
         raise RuntimeError("所有上游镜像源及历史节点均拉取失败，终止任务。")
@@ -1238,7 +1316,9 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
             continue
         if p_type == "vless" and str(proxy.get("cipher", "")).lower() == "none":
             proxy.pop("cipher", None)
-        if p_type in ("ss", "trojan", "hysteria", "hysteria2", "anytls") and not (proxy.get("password") or proxy.get("auth")):
+        if p_type in ("ss", "trojan", "hysteria", "hysteria2", "anytls") and not (
+            proxy.get("password") or proxy.get("auth") or proxy.get("auth-str")
+        ):
             continue
         if p_type == "tuic" and not (proxy.get("uuid") or proxy.get("token")):
             continue
@@ -1256,6 +1336,13 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
 
         unique_key = get_proxy_fingerprint(proxy)
         if unique_key in seen_keys:
+            if (
+                source_name == "历史保活池"
+                and orig_name
+                and extract_cc_from_name(_RAW_NAME_BY_FP.get(unique_key, "")) == "OTHER"
+                and extract_cc_from_name(orig_name) != "OTHER"
+            ):
+                _RAW_NAME_BY_FP[unique_key] = orig_name
             continue
         seen_keys.add(unique_key)
         _SOURCE_BY_FP[unique_key] = source_name
@@ -1381,25 +1468,39 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Dict[str
                     created_sessions.append(sess)
             return sess
 
-        def check_node(name: str) -> Optional[Tuple[Dict[str, Any], int]]:
+        def check_node(name: str) -> Optional[Tuple[Dict[str, Any], int, str]]:
+            """
+            Stage 1 通用存活初筛：
+            先用 cp.cloudflare.com/generate_204 单次探测（全网通用、不因 Google 限流误杀正常节点），
+            仅在快速失败 (<1.8s，如偶发 TLS/网关复位) 时用 google_204 补救 1 次，避免死节点双倍超时浪费时间。
+            """
             encoded_name = urllib.parse.quote(name, safe="")
-            url = (
-                f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{encoded_name}/delay"
-                f"?timeout={HANDSHAKE_TIMEOUT_MS}&url=https://www.google.com/generate_204"
+            probe_urls = (
+                "https://cp.cloudflare.com/generate_204",
+                "https://www.google.com/generate_204",
             )
             s = _get_thread_session()
-            for attempt in range(2):
+            for attempt, probe_url in enumerate(probe_urls):
+                encoded_probe = urllib.parse.quote(probe_url, safe="")
+                url = (
+                    f"http://127.0.0.1:{STAGE1_API_PORT}/proxies/{encoded_name}/delay"
+                    f"?timeout={HANDSHAKE_TIMEOUT_MS}&url={encoded_probe}"
+                )
+                t_probe = time.monotonic()
                 try:
                     resp = s.get(url, timeout=(HANDSHAKE_TIMEOUT_MS / 1000.0) + 0.8)
                     if resp.status_code == 200:
                         d = resp.json()
                         delay = int(d.get("delay", 9999))
                         if 0 < delay <= HANDSHAKE_TIMEOUT_MS:
-                            return (proxy_map[name], delay)
+                            return (proxy_map[name], delay, probe_url)
                 except Exception:
                     pass
+                # 完整超时黑洞节点直接淘汰；仅快速失败才再补救测一次
                 if attempt == 0:
-                    time.sleep(0.3)
+                    if (time.monotonic() - t_probe) >= 1.8:
+                        break
+                    time.sleep(0.15)
             return None
 
         names = [p["name"] for p in proxies]
@@ -1426,10 +1527,10 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Dict[str
         elapsed_total = time.monotonic() - t_start
         log.info("全量初筛完成！耗时: %.1f 秒, 初步存活节点数: %d 个", elapsed_total, len(alive_records))
 
-        # 阶段 1.5: 5 并发多轮采样抖动与丢包精测 (audit_stage1_node)
+        # 阶段 1.5: 低并发/串行多轮采样抖动与丢包精测 (audit_stage1_node，消除高并发射频拥塞带来的假延迟，4 轮宽容防误杀)
         audited_records: List[Dict[str, Any]] = []
         if alive_records:
-            log.info("开始对 %d 个初选节点执行 5 并发低载多轮精测 (抖动与丢包评估)...", len(alive_records))
+            log.info("开始对 %d 个初选节点执行 %d 并发低载多轮精测 (真实延迟与抖动评估)...", len(alive_records), STAGE15_CONCURRENCY)
             flaky_count = 0
             refine_tls = threading.local()
             refine_sessions: List[requests.Session] = []
@@ -1443,22 +1544,22 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Dict[str
                         refine_sessions.append(sess)
                 return sess
 
-            def refine_check(item: Tuple[Dict[str, Any], int]) -> Optional[Dict[str, Any]]:
-                p, d1 = item
-                time.sleep(0.25)
+            def refine_check(item: Tuple[Dict[str, Any], int, str]) -> Optional[Dict[str, Any]]:
+                p, d1, p_url = item
                 return audit_stage1_node(
                     p,
                     d1,
                     api_port=STAGE1_API_PORT,
-                    timeout_ms=HANDSHAKE_TIMEOUT_MS,
-                    samples=3,
+                    timeout_ms=HANDSHAKE_TIMEOUT_MS + 500,
+                    probe_url=p_url,
+                    samples=4,
                     min_success=2,
                     session=_get_refine_session(),
                     sample_interval_s=0.25,
                 )
 
             try:
-                with ThreadPoolExecutor(max_workers=5) as pool:
+                with ThreadPoolExecutor(max_workers=STAGE15_CONCURRENCY) as pool:
                     futures = [pool.submit(refine_check, item) for item in alive_records]
                     for f in as_completed(futures):
                         res = f.result()
@@ -1491,31 +1592,95 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Dict[str
 # ======================== 阶段 3: 落地 IP 属性与品质判定 (委托 node_quality.py) ========================
 
 
+_FLAG_EMOJI_CC: Dict[str, str] = {
+    "🇭🇰": "HK", "🇹🇼": "TW", "🇲🇴": "MO", "🇯🇵": "JP", "🇸🇬": "SG",
+    "🇺🇸": "US", "🇰🇷": "KR", "🇩🇪": "DE", "🇬🇧": "GB", "🇫🇷": "FR",
+    "🇳🇱": "NL", "🇷🇺": "RU", "🇮🇹": "IT", "🇨🇦": "CA", "🇦🇺": "AU",
+    "🇮🇳": "IN", "🇹🇷": "TR", "🇻🇳": "VN", "🇲🇾": "MY", "🇹🇭": "TH",
+    "🇵🇭": "PH", "🇮🇩": "ID", "🇧🇷": "BR", "🇪🇸": "ES", "🇸🇪": "SE",
+    "🇨🇭": "CH", "🇦🇹": "AT", "🇧🇬": "BG", "🇮🇪": "IE", "🇫🇮": "FI",
+    "🇳🇴": "NO", "🇵🇱": "PL", "🇺🇦": "UA", "🇦🇪": "AE", "🇮🇱": "IL",
+    "🇰🇿": "KZ", "🇲🇩": "MD", "🇪🇪": "EE", "🇦🇲": "AM",
+}
+
+_LONG_CC_KEYWORDS: Tuple[Tuple[str, str], ...] = (
+    ("香港", "HK"), ("HONG KONG", "HK"), ("HONGKONG", "HK"),
+    ("台湾", "TW"), ("TAIWAN", "TW"), ("TAIPEI", "TW"),
+    ("日本", "JP"), ("JAPAN", "JP"), ("TOKYO", "JP"), ("OSAKA", "JP"),
+    ("新加坡", "SG"), ("SINGAPORE", "SG"),
+    ("美国", "US"), ("UNITED STATES", "US"), ("LOS ANGELES", "US"), ("SILICON VALLEY", "US"),
+    ("韩国", "KR"), ("KOREA", "KR"), ("SEOUL", "KR"),
+    ("德国", "DE"), ("GERMANY", "DE"), ("FRANKFURT", "DE"),
+    ("英国", "GB"), ("UNITED KINGDOM", "GB"), ("BRITAIN", "GB"), ("LONDON", "GB"),
+    ("法国", "FR"), ("FRANCE", "FR"), ("PARIS", "FR"),
+    ("荷兰", "NL"), ("NETHERLANDS", "NL"), ("AMSTERDAM", "NL"),
+    ("俄罗斯", "RU"), ("RUSSIA", "RU"), ("MOSCOW", "RU"),
+    ("意大利", "IT"), ("ITALY", "IT"), ("MILAN", "IT"),
+    ("加拿大", "CA"), ("CANADA", "CA"), ("TORONTO", "CA"),
+    ("澳大利亚", "AU"), ("澳洲", "AU"), ("AUSTRALIA", "AU"), ("SYDNEY", "AU"),
+    ("土耳其", "TR"), ("TURKEY", "TR"), ("ISTANBUL", "TR"),
+    ("印度", "IN"), ("INDIA", "IN"), ("MUMBAI", "IN"),
+    ("越南", "VN"), ("VIETNAM", "VN"),
+    ("马来西亚", "MY"), ("MALAYSIA", "MY"),
+    ("泰国", "TH"), ("THAILAND", "TH"),
+    ("菲律宾", "PH"), ("PHILIPPINES", "PH"),
+    ("巴西", "BR"), ("BRAZIL", "BR"),
+    ("西班牙", "ES"), ("SPAIN", "ES"),
+    ("瑞典", "SE"), ("SWEDEN", "SE"), ("STOCKHOLM", "SE"),
+    ("瑞士", "CH"), ("SWITZERLAND", "CH"), ("ZURICH", "CH"),
+    ("挪威", "NO"), ("NORWAY", "NO"), ("OSLO", "NO"),
+    ("芬兰", "FI"), ("FINLAND", "FI"), ("HELSINKI", "FI"),
+    ("波兰", "PL"), ("POLAND", "PL"), ("WARSAW", "PL"),
+    ("奥地利", "AT"), ("AUSTRIA", "AT"), ("VIENNA", "AT"),
+    ("阿联酋", "AE"), ("迪拜", "AE"), ("DUBAI", "AE"),
+    ("以色列", "IL"), ("ISRAEL", "IL"),
+    ("哈萨克斯坦", "KZ"), ("KAZAKHSTAN", "KZ"),
+    ("摩尔多瓦", "MD"), ("MOLDOVA", "MD"),
+    ("爱沙尼亚", "EE"), ("ESTONIA", "EE"),
+    ("亚美尼亚", "AM"), ("ARMENIA", "AM"),
+)
+
+_ISO_CODE_WORDS: Tuple[Tuple[str, str], ...] = (
+    ("HK", "HK"), ("HKG", "HK"),
+    ("TW", "TW"), ("TWN", "TW"),
+    ("JP", "JP"), ("JPN", "JP"),
+    ("SG", "SG"), ("SGP", "SG"),
+    ("US", "US"), ("USA", "US"),
+    ("KR", "KR"), ("KOR", "KR"),
+    ("DE", "DE"), ("DEU", "DE"),
+    ("GB", "GB"), ("UK", "GB"), ("GBR", "GB"),
+    ("FR", "FR"), ("FRA", "FR"),
+    ("NL", "NL"), ("NLD", "NL"),
+    ("RU", "RU"), ("RUS", "RU"),
+    ("CA", "CA"), ("CAN", "CA"),
+    ("AU", "AU"), ("AUS", "AU"),
+    ("TR", "TR"), ("TUR", "TR"),
+    ("IT", "IT"), ("ITA", "IT"),
+    ("ES", "ES"), ("ESP", "ES"),
+    ("SE", "SE"), ("SWE", "SE"),
+    ("CH", "CH"), ("CHE", "CH"),
+    ("NO", "NO"), ("NOR", "NO"),
+    ("FI", "FI"), ("FIN", "FI"),
+    ("PL", "PL"), ("POL", "PL"),
+    ("AT", "AT"), ("AUT", "AT"),
+    ("KZ", "KZ"), ("AE", "AE"), ("IL", "IL"), ("IN", "IN"),
+    ("BR", "BR"), ("VN", "VN"), ("MY", "MY"), ("TH", "TH"), ("PH", "PH"),
+)
+
+
 def extract_cc_from_name(raw_name: str) -> str:
-    """从节点名称中推断国家代码，防止因外部 IP API 限流或超时误杀节点。"""
+    """从节点名称中安全推断国家代码 (支持国旗 Emoji、中文地名与边界 ISO 编码，避免 RUSSIA/PLUS 误匹配 US)。"""
+    if not raw_name:
+        return "OTHER"
+    for emoji, cc in _FLAG_EMOJI_CC.items():
+        if emoji in raw_name:
+            return cc
     name_upper = raw_name.upper()
-    keywords = {
-        "香港": "HK", "HK": "HK", "HONG KONG": "HK",
-        "台湾": "TW", "TW": "TW", "TAIWAN": "TW",
-        "日本": "JP", "JP": "JP", "JAPAN": "JP",
-        "新加坡": "SG", "SG": "SG", "SINGAPORE": "SG",
-        "美国": "US", "US": "US", "USA": "US",
-        "韩国": "KR", "KR": "KR", "KOREA": "KR",
-        "德国": "DE", "DE": "DE", "GERMANY": "DE",
-        "英国": "GB", "GB": "GB", "UK": "GB",
-        "法国": "FR", "FR": "FR", "FRANCE": "FR",
-        "荷兰": "NL", "NL": "NL", "NETHERLANDS": "NL",
-        "俄罗斯": "RU", "RU": "RU", "RUSSIA": "RU",
-        "意大利": "IT", "IT": "IT", "ITALY": "IT",
-        "加拿大": "CA", "CA": "CA", "CANADA": "CA",
-        "澳大利亚": "AU", "AU": "AU", "AUSTRALIA": "AU",
-        "土耳其": "TR", "TR": "TR", "TURKEY": "TR",
-        "哈萨克斯坦": "KZ", "KZ": "KZ",
-        "芬兰": "FI", "FI": "FI",
-        "奥地利": "AT", "AT": "AT",
-    }
-    for kw, cc in keywords.items():
+    for kw, cc in _LONG_CC_KEYWORDS:
         if kw in name_upper or kw in raw_name:
+            return cc
+    for code, cc in _ISO_CODE_WORDS:
+        if re.search(rf"(?<![A-Z]){code}(?![A-Z])", name_upper):
             return cc
     return "OTHER"
 
@@ -1534,7 +1699,9 @@ def run_stage2_exit_detection(
     TMP_STAGE2_DIR.mkdir(parents=True, exist_ok=True)
     cfg_path = TMP_STAGE2_DIR / "config.yaml"
 
-    # Stage 1.5 -> Stage 2 候选封顶 (按延迟/抖动/丢包率优先选取前 STAGE2_MAX_CANDIDATES 个，确保总耗时留足余量)
+    # Stage 1.5 -> Stage 2 候选收敛:
+    # 优先为已知历史「纯净 / 原生」高质量节点保留最多 STAGE2_RESERVED_HIGH_TIER 个名额，
+    # 避免跨洋高质原生节点在进 Stage 2 前被低延迟广播节点挤掉，其余名额按延迟/抖动/丢包率补满至 STAGE2_MAX_CANDIDATES。
     def _stage15_sort_key(rec: Any) -> Tuple[int, int, float]:
         if isinstance(rec, dict):
             return (
@@ -1544,13 +1711,33 @@ def run_stage2_exit_detection(
             )
         return (int(rec[1]), 0, 0.0)
 
-    selected_alive = sorted(alive_records, key=_stage15_sort_key)
-    if len(selected_alive) > STAGE2_MAX_CANDIDATES:
+    def _rec_proxy_and_delay(rec: Any) -> Tuple[Dict[str, Any], int]:
+        if isinstance(rec, dict):
+            return rec["proxy"], int(rec.get("delay_ms", rec.get("delay", 9999)))
+        return rec[0], int(rec[1])
+
+    sorted_alive = sorted(alive_records, key=_stage15_sort_key)
+    if len(sorted_alive) > STAGE2_MAX_CANDIDATES:
+        reserved: List[Any] = []
+        reserved_indices: Set[int] = set()
+        if _PRIORITY_HISTORICAL_FPS:
+            for idx_rec, rec in enumerate(sorted_alive):
+                if len(reserved) >= STAGE2_RESERVED_HIGH_TIER:
+                    break
+                p_obj, p_delay = _rec_proxy_and_delay(rec)
+                if p_delay <= STAGE2_PRIORITY_MAX_DELAY_MS and get_proxy_fingerprint(p_obj) in _PRIORITY_HISTORICAL_FPS:
+                    reserved.append(rec)
+                    reserved_indices.add(idx_rec)
+
+        remainder = [rec for idx_rec, rec in enumerate(sorted_alive) if idx_rec not in reserved_indices]
+        need_more = STAGE2_MAX_CANDIDATES - len(reserved)
+        selected_alive = sorted(reserved + remainder[:need_more], key=_stage15_sort_key)
         log.info(
-            "Stage 2 候选收敛: Stage 1.5 稳定节点 %d 个 -> 精选延迟最优前 %d 个进入落地检测",
-            len(selected_alive), STAGE2_MAX_CANDIDATES,
+            "Stage 2 候选收敛: Stage 1.5 稳定节点 %d 个 -> 精选 %d 个 (优先保送历史纯净/原生 %d 个)",
+            len(sorted_alive), len(selected_alive), len(reserved),
         )
-        selected_alive = selected_alive[:STAGE2_MAX_CANDIDATES]
+    else:
+        selected_alive = sorted_alive
 
     mihomo_proxies: List[Dict[str, Any]] = []
     internal_names: List[str] = []
@@ -1761,26 +1948,42 @@ def bucket_and_limit_nodes(verified_records: List[Dict[str, Any]]) -> List[Dict[
     - 单平铺策略组上限 MAX_NODES_PER_GROUP (50) 个；
     - 重命名为 "{地区} | {tier}·{原生|广播} | {两位编号}"，保持单平铺 PROXY + 漏网之鱼 布局。
     """
+    push_state = load_push_state(PUSH_STATE_FILE)
+    incumbent_fps: Set[str] = set()
+    incumbent_top_fps: Set[str] = set()
+    if isinstance(push_state, dict):
+        if isinstance(push_state.get("fingerprints"), list):
+            incumbent_fps = {str(fp) for fp in push_state["fingerprints"] if fp}
+        if isinstance(push_state.get("top_fingerprints"), list):
+            incumbent_top_fps = {str(fp) for fp in push_state["top_fingerprints"][:5] if fp}
+
     final_proxies = score_and_rank_nodes(
         verified_records,
         max_nodes=MAX_NODES_PER_GROUP,
         cc_region_names=CC_REGION_NAMES,
         include_origin_in_name=True,
+        incumbent_fps=incumbent_fps,
+        incumbent_top_fps=incumbent_top_fps,
+        get_fingerprint_fn=get_proxy_fingerprint,
     )
 
     if final_proxies:
         top = final_proxies[0]
         origin_counts = Counter(r.get("ip_origin", "未知") for r in final_proxies)
+        unflagged_cnt = sum(1 for r in final_proxies if r.get("proxy_flagged") is False)
+        flagged_cnt = sum(1 for r in final_proxies if r.get("proxy_flagged") is True)
         gclean_cnt = sum(1 for r in final_proxies if r.get("google_clean"))
         gem_cnt = sum(1 for r in final_proxies if r.get("gemini_clean"))
         log.info(
-            "全局优选排序完成: 共保留 %d 个节点 (上限=%d) | 首位=[%s] score=%.1f delay=%dms speed=%.0fkbps | 原生=%d 广播=%d Google净=%d Gemini净=%d",
+            "全局优选排序完成: 共保留 %d 个节点 (上限=%d) | 首位=[%s] score=%.1f delay=%dms speed=%.0fkbps | 非代理=%d 代理VPN=%d 原生=%d 广播=%d Google净=%d Gemini净=%d",
             len(final_proxies),
             MAX_NODES_PER_GROUP,
             top["proxy"]["name"],
             float(top.get("quality_score", 0.0)),
             int(top.get("delay", 0)),
             float(top.get("speed_kbps", 0.0)),
+            unflagged_cnt,
+            flagged_cnt,
             origin_counts.get("原生", 0),
             origin_counts.get("广播", 0),
             gclean_cnt,
@@ -1877,12 +2080,11 @@ def build_readme(
     alive_count: int,
     final_records: List[Dict[str, Any]],
 ) -> str:
-    tier_counts = Counter(r["tier"] for r in final_records)
     origin_counts = Counter(r.get("ip_origin", "未知") for r in final_records)
     cc_counts = Counter(r["cc"] for r in final_records)
 
-    clean_count = tier_counts.get("纯净", 0)
-    premium_count = tier_counts.get("优选", 0)
+    unflagged_count = sum(1 for r in final_records if r.get("proxy_flagged") is False)
+    flagged_count = sum(1 for r in final_records if r.get("proxy_flagged") is True)
     native_count = origin_counts.get("原生", 0)
     broadcast_count = origin_counts.get("广播", 0)
     gclean_count = sum(1 for r in final_records if r.get("google_clean"))
@@ -1946,7 +2148,7 @@ proxy-providers:
 | :--- | :--- |
 | **最后更新时间 (UTC)** | `{update_time_utc}` |
 | **当前入库节点总数** | **{total_final}** (已全量排除中国大陆落地) |
-| **纯净住宅 / 优选节点** | {clean_count} / {premium_count} |
+| **非代理 IP / 代理·VPN 标记** | {unflagged_count} / {flagged_count} |
 | **原生 IP / 广播 IP** | {native_count} / {broadcast_count} |
 | **Google 无封禁 / Gemini 可达** | {gclean_count} / {gemini_count} |
 
@@ -1957,7 +2159,7 @@ proxy-providers:
 {cc_rows}
 
 ---
-*注：节点命名规则为 `{{地区中文名}} | {{纯净/优选/普通}}·{{原生/广播}} | {{序号}}`，已按综合质量评分降序排列。*
+*注：节点命名规则为 `{{地区}}|{{非代理/代理/VPN/代理VPN}}·{{原生/广播/未知}}|{{序号}}`，已按综合质量评分降序排列。*
 """
 
 
@@ -1977,7 +2179,6 @@ def save_local_metrics(
     try:
         METRICS_FILE.parent.mkdir(parents=True, exist_ok=True)
         origin_counts = Counter(r.get("ip_origin", "未知") for r in final_records)
-        tier_counts = Counter(r.get("tier", "普通") for r in final_records)
         payload = {
             "timestamp_utc": datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
             "elapsed_s": round(elapsed_s, 1),
@@ -1989,8 +2190,8 @@ def save_local_metrics(
             "final_count": len(final_records),
             "native_count": origin_counts.get("原生", 0),
             "broadcast_count": origin_counts.get("广播", 0),
-            "pure_count": tier_counts.get("纯净", 0),
-            "premium_count": tier_counts.get("优选", 0),
+            "unflagged_proxy_count": sum(1 for r in final_records if r.get("proxy_flagged") is False),
+            "flagged_proxy_vpn_count": sum(1 for r in final_records if r.get("proxy_flagged") is True),
             "google_clean_count": sum(1 for r in final_records if r.get("google_clean")),
             "gemini_clean_count": sum(1 for r in final_records if r.get("gemini_clean")),
             "push_triggered": bool(push_triggered),
@@ -2064,9 +2265,14 @@ def atomic_push_to_github(
                 shutil.rmtree(main_repo_dir, ignore_errors=True)
             log.info("拉取 main 分支以同步内嵌最新节点...")
             res = subprocess.run(
-                ["git", "clone", "-b", "main", "--depth", "1", GIT_REMOTE_URL, str(main_repo_dir)],
+                ["git", "clone", "-b", "main", "--depth", "2", GIT_REMOTE_URL, str(main_repo_dir)],
                 env=git_env, capture_output=True, text=True, timeout=60,
             )
+            if res.returncode != 0:
+                res = subprocess.run(
+                    ["git", "clone", "-b", "main", "--depth", "1", GIT_REMOTE_URL, str(main_repo_dir)],
+                    env=git_env, capture_output=True, text=True, timeout=60,
+                )
             if res.returncode == 0:
                 config_file = main_repo_dir / "cmfa-merged-config.yaml"
                 if config_file.exists():
@@ -2096,17 +2302,70 @@ def atomic_push_to_github(
                         run_git(["config", "user.name", GIT_USER_NAME], main_repo_dir, git_env)
                         run_git(["config", "user.email", GIT_USER_EMAIL], main_repo_dir, git_env)
                         run_git(["add", "cmfa-merged-config.yaml"], main_repo_dir, git_env)
-                        commit_res = subprocess.run(
-                            ["git", "commit", "-m", f"chore: sync live embedded nodes ({update_time_utc})"],
+
+                        diff_chk = subprocess.run(
+                            ["git", "diff", "--cached", "--quiet"],
                             cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
                         )
-                        if commit_res.returncode == 0:
-                            push_res = subprocess.run(
-                                ["git", "push", "origin", "main"],
-                                cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True, timeout=60,
+                        if diff_chk.returncode == 0:
+                            log.info("main 分支 cmfa-merged-config.yaml 内容无变化，跳过冗余提交。")
+                            return
+
+                        # 若 main 最新提交本身仅为节点自动同步，则滚动 amend 替换，绝不覆写测速程序源码提交且防止历史无限增长
+                        head_msg_res = subprocess.run(
+                            ["git", "log", "-1", "--pretty=%s"],
+                            cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
+                        )
+                        head_files_res = subprocess.run(
+                            ["git", "diff-tree", "--no-commit-id", "--name-only", "-r", "HEAD"],
+                            cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
+                        )
+                        depth_cnt_res = subprocess.run(
+                            ["git", "rev-list", "--count", "HEAD"],
+                            cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
+                        )
+                        head_subject = head_msg_res.stdout.strip()
+                        head_files = [ln.strip() for ln in head_files_res.stdout.splitlines() if ln.strip()]
+                        try:
+                            depth_cnt = int(depth_cnt_res.stdout.strip())
+                        except ValueError:
+                            depth_cnt = 1
+
+                        can_rolling_amend = (
+                            depth_cnt >= 2
+                            and head_subject.startswith("chore: sync live embedded nodes")
+                            and head_files == ["cmfa-merged-config.yaml"]
+                        )
+
+                        sync_msg = f"chore: sync live embedded nodes ({update_time_utc})"
+                        if can_rolling_amend:
+                            commit_res = subprocess.run(
+                                ["git", "commit", "--amend", "-m", sync_msg],
+                                cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
                             )
-                            if push_res.returncode == 0:
-                                log.info("🎉 main 分支主配置 (cmfa-merged-config.yaml) 内嵌节点同步推送成功！")
+                            if commit_res.returncode == 0:
+                                push_res = subprocess.run(
+                                    ["git", "push", "--force-with-lease", "origin", "main"],
+                                    cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True, timeout=60,
+                                )
+                                if push_res.returncode == 0:
+                                    log.info("🎉 main 分支通过 rolling amend 刷新内嵌节点成功 (无历史膨胀)！")
+                                else:
+                                    log.warning("main 分支 rolling amend 推送失败: %s", push_res.stderr[:240])
+                        else:
+                            commit_res = subprocess.run(
+                                ["git", "commit", "-m", sync_msg],
+                                cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True,
+                            )
+                            if commit_res.returncode == 0:
+                                push_res = subprocess.run(
+                                    ["git", "push", "origin", "main"],
+                                    cwd=str(main_repo_dir), env=git_env, capture_output=True, text=True, timeout=60,
+                                )
+                                if push_res.returncode == 0:
+                                    log.info("🎉 main 分支主配置 (cmfa-merged-config.yaml) 内嵌节点同步推送成功！")
+                                else:
+                                    log.warning("main 分支同步推送失败: %s", push_res.stderr[:240])
         except Exception as exc:
             log.warning("同步更新 main 分支内嵌节点异常 (不影响 nodes 分支发布): %s", exc)
         finally:
@@ -2220,10 +2479,8 @@ def main() -> int:
                          verified_count, MIN_SAFEGUARD_NODES)
             return 1
 
-        # 4. Stage 4: 综合评分排序、容量封顶与重命名 (保持单平铺 PROXY + 漏网之鱼)
+        # 4. Stage 4: 综合评分排序 (含现役健康节点粘性保序)、容量封顶与重命名
         final_records = bucket_and_limit_nodes(verified_records)
-        del verified_records
-        gc.collect()
 
         if len(final_records) < MIN_SAFEGUARD_NODES:
             log.critical("[熔断保护] 最终精选节点仅 %d 个 (< %d)，终止发布！",
@@ -2239,18 +2496,22 @@ def main() -> int:
             old_meta=old_hist_meta,
         )
 
-        # 6. Stage 5b: 滚动推送门控判断
+        # 6. Stage 5b: 滚动推送门控判断 (传入全量 qualified 池区分真正掉线与边缘名次微调)
         should_push, push_reason, push_metrics = should_push_rolling_update(
             final_records,
+            all_verified_records=verified_records,
             state_file=PUSH_STATE_FILE,
             get_fingerprint_fn=get_proxy_fingerprint,
         )
+        del verified_records
+        gc.collect()
         if should_push:
             summary_metrics = {
                 k: push_metrics[k]
                 for k in (
                     "prev_count", "curr_count", "node_count", "turnover_ratio",
-                    "sym_diff_count", "high_tier_churn", "elapsed_sec", "proxies_hash",
+                    "sym_diff_count", "top_down_count", "top_evicted_count",
+                    "high_tier_churn", "high_tier_lost", "elapsed_sec", "proxies_hash",
                 )
                 if k in push_metrics
             }

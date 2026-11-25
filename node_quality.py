@@ -32,11 +32,12 @@ log = logging.getLogger("node_quality")
 # ======================== Constants & Defaults ========================
 
 DEFAULT_PUSH_STATE_FILE = Path("/opt/clash-filter/push_state.json")
+LABEL_SCHEMA_VERSION = "v3_short_pv_origin"
 DEFAULT_IP_CACHE_FILE = Path("/opt/clash-filter/ip_intel_cache.json")
 DEFAULT_IP_CACHE_TTL_SEC = 48.0 * 3600.0
 DEFAULT_IP_CACHE_MAX_ENTRIES = 2000
 IPAPI_QUOTA_COOLDOWN_SEC = 900.0
-DEFAULT_SPEEDTEST_BYTES = 131072  # 128 KiB: 0.2-0.8s on stick, safe for 2.4G Wi-Fi
+DEFAULT_SPEEDTEST_BYTES = 262144  # 256 KiB: saturates TCP window past TTFB in 0.3-0.7s
 MAX_SPEEDTEST_BYTES = 524288      # Hard safety cap (512 KiB)
 MAX_INSPECT_BODY_BYTES = 32768    # Cap HTML inspection reads to protect RAM
 
@@ -53,7 +54,7 @@ USER_AGENT_CLI = "curl/8.5.0"
 
 DEFAULT_SPEEDTEST_URLS: Tuple[str, ...] = (
     "https://speed.cloudflare.com/__down?bytes={nbytes}",
-    "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js",
+    "https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js",
 )
 
 # Regional/placeholder codes returned by RDAP or GeoIP that are not a real country
@@ -442,6 +443,35 @@ def _parse_ipapi_is_payload(d: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     }
 
 
+def classify_proxy_vpn_status(ip_info: Optional[Dict[str, Any]]) -> Tuple[str, Optional[bool]]:
+    """
+    Classify whether an exit IP is flagged as Proxy/VPN/Tor by IP intelligence
+    using compact badges suitable for mobile Clash UIs.
+    Returns (badge_label, is_flagged) where is_flagged is True / False / None.
+    """
+    if not isinstance(ip_info, dict) or not ip_info:
+        return ("未知", None)
+
+    is_proxy = ip_info.get("is_proxy")
+    is_vpn = ip_info.get("is_vpn")
+    is_tor = ip_info.get("is_tor")
+    generic_proxy = ip_info.get("proxy")
+
+    if is_tor is True and (is_proxy is True or is_vpn is True):
+        return ("代理VPN", True)
+    if is_tor is True:
+        return ("Tor", True)
+    if is_proxy is True and is_vpn is True:
+        return ("代理VPN", True)
+    if is_vpn is True:
+        return ("VPN", True)
+    if is_proxy is True or generic_proxy is True:
+        return ("代理", True)
+    if is_proxy is False or generic_proxy is False:
+        return ("非代理", False)
+    return ("未知", None)
+
+
 def lookup_rdap_country(
     ip: str,
     *,
@@ -633,6 +663,44 @@ def _query_ipwho_is(
     return None
 
 
+def _query_cloudflare_trace(
+    sess: requests.Session,
+    trace_url: str,
+    headers: Dict[str, str],
+    timeout: float,
+) -> Optional[Dict[str, Any]]:
+    """Fast, unthrottled fallback returning exit IP and Cloudflare edge `loc` country."""
+    try:
+        r = sess.get(trace_url, headers=headers, timeout=timeout)
+        if r.status_code == 200 and r.text:
+            kv: Dict[str, str] = {}
+            for line in r.text.splitlines():
+                if "=" in line:
+                    k, v = line.split("=", 1)
+                    kv[k.strip()] = v.strip()
+            ip = kv.get("ip", "")
+            cc = _normalize_cc(kv.get("loc"))
+            if ip or cc:
+                return {
+                    "ip": ip,
+                    "cc": cc or "OTHER",
+                    "asn_country": "",
+                    "isp": "",
+                    "org": "",
+                    "as": "",
+                    "hosting": None,
+                    "proxy": None,
+                    "is_datacenter": None,
+                    "is_proxy": None,
+                    "is_abuser": False,
+                    "is_anycast": False,
+                    "source": "cloudflare_trace",
+                }
+    except Exception:
+        pass
+    return None
+
+
 def query_exit_ip_info(
     proxy_url: str,
     *,
@@ -648,25 +716,37 @@ def query_exit_ip_info(
     ipapi_url: str = "https://api.ipapi.is/",
     ip_api_url: str = "http://ip-api.com/json/?fields=status,countryCode,isp,org,as,hosting,proxy,mobile,query",
     ipwho_url: str = "http://ipwho.is/",
+    cf_trace_url: str = "https://www.cloudflare.com/cdn-cgi/trace",
     rdap_base_url: str = "https://rdap.org/ip",
 ) -> Optional[Dict[str, Any]]:
     """
     Probe exit IP geolocation, ISP/datacenter risk flags, and Native vs Broadcast origin.
 
-    When `ip_cache_file` is enabled, resolves the exit IP via free ip-api.com/ipwho.is
-    first and checks the persistent 48h TTL cache before consuming ipapi.is quota.
-    Handles ipapi.is 401/402/403/429 quota exhaustion gracefully via free fallbacks.
+    When `ip_cache_file` is enabled, resolves the exit IP via free ip-api.com/ipwho.is/
+    cloudflare trace first and checks the persistent 48h TTL cache before consuming
+    ipapi.is quota. Handles ipapi.is 401/402/403/429 quota exhaustion gracefully.
     """
     owns_session = session is None
     sess = session or create_probe_session(proxy_url, user_agent=USER_AGENT_CLI)
+    relay_sess: Optional[requests.Session] = None
     req_headers = {"User-Agent": USER_AGENT_CLI}
-    probe_timeout = min(float(timeout), 4.5)
+    probe_timeout = min(float(timeout), 2.5)
     info: Optional[Dict[str, Any]] = None
+
+    def _get_relay_sess() -> Optional[requests.Session]:
+        nonlocal relay_sess
+        if not relay_proxy_url:
+            return None
+        if relay_sess is None:
+            relay_sess = create_probe_session(relay_proxy_url, user_agent=USER_AGENT_CLI)
+        return relay_sess
 
     try:
         if ip_cache_file is not None:
-            # Cache-first mode: obtain exit IP via free endpoint, then check 48h cache
+            # Cache-first mode: resolve exit IP via ip-api.com -> unlimited cloudflare_trace -> ipwho.is
             info = _query_ip_api_com(sess, ip_api_url, req_headers, probe_timeout)
+            if info is None:
+                info = _query_cloudflare_trace(sess, cf_trace_url, req_headers, probe_timeout)
             if info is None:
                 info = _query_ipwho_is(sess, ipwho_url, req_headers, probe_timeout)
 
@@ -683,25 +763,28 @@ def query_exit_ip_info(
                     origin_type, origin_reason = detect_ip_origin_type(
                         cached, rdap_country=cached.get("rdap_country")
                     )
+                    pv_label, pv_flagged = classify_proxy_vpn_status(cached)
                     cached["ip_origin"] = origin_type
                     cached["ip_origin_reason"] = origin_reason
+                    cached["proxy_vpn_status"] = pv_label
+                    cached["proxy_flagged"] = pv_flagged
                     cached["cache_hit"] = True
                     return cached
 
             # Cache miss: enrich with ipapi.is if key is valid & not in cooldown
             if ipapi_key and not _is_ipapi_quota_blocked():
                 enriched: Optional[Dict[str, Any]] = None
-                if exit_ip and relay_proxy_url:
-                    with create_probe_session(relay_proxy_url, user_agent=USER_AGENT_CLI) as relay_s:
-                        enriched = _query_ipapi_is(
-                            relay_s, ipapi_url, ipapi_key, req_headers, float(timeout), target_ip=exit_ip
-                        )
+                rs = _get_relay_sess() if exit_ip else None
+                if rs is not None:
+                    enriched = _query_ipapi_is(
+                        rs, ipapi_url, ipapi_key, req_headers, float(timeout), target_ip=exit_ip
+                    )
                 if enriched is None:
                     enriched = _query_ipapi_is(
                         sess, ipapi_url, ipapi_key, req_headers, float(timeout), target_ip=exit_ip
                     )
                 if enriched is not None:
-                    if not enriched.get("cc") and info and info.get("cc"):
+                    if (not enriched.get("cc") or enriched.get("cc") == "OTHER") and info and info.get("cc"):
                         enriched["cc"] = info["cc"]
                     if not enriched.get("ip") and exit_ip:
                         enriched["ip"] = exit_ip
@@ -712,15 +795,18 @@ def query_exit_ip_info(
             if info is None:
                 info = _query_ip_api_com(sess, ip_api_url, req_headers, probe_timeout)
             if info is None:
+                info = _query_cloudflare_trace(sess, cf_trace_url, req_headers, probe_timeout)
+            if info is None:
                 info = _query_ipwho_is(sess, ipwho_url, req_headers, probe_timeout)
 
-            if info is not None and ipapi_key and info.get("source") != "ipapi.is" and info.get("ip") and relay_proxy_url:
-                with create_probe_session(relay_proxy_url, user_agent=USER_AGENT_CLI) as relay_s:
+            if info is not None and ipapi_key and info.get("source") != "ipapi.is" and info.get("ip"):
+                rs = _get_relay_sess()
+                if rs is not None:
                     enriched = _query_ipapi_is(
-                        relay_s, ipapi_url, ipapi_key, req_headers, float(timeout), target_ip=info["ip"]
+                        rs, ipapi_url, ipapi_key, req_headers, float(timeout), target_ip=info["ip"]
                     )
                     if enriched:
-                        if not enriched.get("cc") and info.get("cc"):
+                        if (not enriched.get("cc") or enriched.get("cc") == "OTHER") and info.get("cc"):
                             enriched["cc"] = info["cc"]
                         enriched["source"] = f"{info['source']}+ipapi.is_relay"
                         info = enriched
@@ -731,27 +817,22 @@ def query_exit_ip_info(
         # Rare RDAP fallback only if asn_country is missing
         rdap_cc = str(info.get("rdap_country", "")).strip()
         if enable_rdap_fallback and info.get("ip") and not info.get("asn_country") and not rdap_cc:
-            rdap_sess = sess
-            owns_rdap_sess = False
-            if relay_proxy_url:
-                rdap_sess = create_probe_session(relay_proxy_url, user_agent=USER_AGENT_CLI)
-                owns_rdap_sess = True
-            try:
-                rdap_cc = lookup_rdap_country(
-                    info["ip"],
-                    session=rdap_sess,
-                    timeout=rdap_timeout,
-                    rdap_base_url=rdap_base_url,
-                )
-            finally:
-                if owns_rdap_sess:
-                    rdap_sess.close()
+            rdap_sess = _get_relay_sess() or sess
+            rdap_cc = lookup_rdap_country(
+                info["ip"],
+                session=rdap_sess,
+                timeout=rdap_timeout,
+                rdap_base_url=rdap_base_url,
+            )
             if rdap_cc:
                 info["rdap_country"] = rdap_cc
 
         origin_type, origin_reason = detect_ip_origin_type(info, rdap_country=rdap_cc)
+        pv_label, pv_flagged = classify_proxy_vpn_status(info)
         info["ip_origin"] = origin_type
         info["ip_origin_reason"] = origin_reason
+        info["proxy_vpn_status"] = pv_label
+        info["proxy_flagged"] = pv_flagged
         info["cache_hit"] = False
 
         if (
@@ -769,6 +850,8 @@ def query_exit_ip_info(
 
         return info
     finally:
+        if relay_sess is not None:
+            relay_sess.close()
         if owns_session:
             sess.close()
 
@@ -816,6 +899,9 @@ def audit_stage1_node(
 
     try:
         while attempts < samples:
+            # Fast-finish healthy stable nodes on sample 3 unless needed as a 4th tie-breaker
+            if samples >= 4 and attempts >= 3 and len(success_delays) >= min_success:
+                break
             # Early exit if remaining attempts cannot achieve min_success
             remaining = samples - attempts
             if len(success_delays) + remaining < min_success:
@@ -896,7 +982,7 @@ def check_google_and_connectivity(
     google_204_ok = False
     cloudflare_ok = False
     youtube_ok = False
-    conn_timeout = min(float(timeout), 4.5)
+    conn_timeout = min(max(float(timeout), 5.5), 7.5)
     hard_net_failures = 0
 
     for attempt in range(2):
@@ -1042,20 +1128,24 @@ def measure_throughput_kbps(
     urls: Optional[Iterable[str]] = None,
 ) -> Dict[str, Any]:
     """
-    Run a capped micro-payload download to measure practical throughput in kbps.
-    Strictly caps read bytes and streams chunks to minimize RAM usage.
+    Run a capped micro-payload download to measure post-TTFB throughput in kbps.
+    Forces `Accept-Encoding: identity` so compression never inflates wire bytes,
+    and excludes TLS/HTTP connect handshake TTFB from bandwidth calculation.
     """
     capped_bytes = max(16384, min(int(nbytes), MAX_SPEEDTEST_BYTES))
     target_urls = [u.format(nbytes=capped_bytes) for u in (urls or DEFAULT_SPEEDTEST_URLS)]
+    headers = {"Accept-Encoding": "identity"}
 
     req_timeout = (min(float(timeout), 3.5), float(timeout))
     for url in target_urls:
-        t0 = time.monotonic()
+        t_conn = time.monotonic()
         downloaded = 0
         try:
-            with session.get(url, timeout=req_timeout, stream=True) as r:
+            with session.get(url, headers=headers, timeout=req_timeout, stream=True) as r:
                 if r.status_code != 200:
                     continue
+                t_body_start = time.monotonic()
+                ttfb_ms = int(round((t_body_start - t_conn) * 1000.0))
                 for chunk in r.iter_content(chunk_size=16384):
                     if not chunk:
                         continue
@@ -1065,13 +1155,17 @@ def measure_throughput_kbps(
                     downloaded += min(len(chunk), needed)
                     if downloaded >= capped_bytes:
                         break
-            elapsed_s = max(time.monotonic() - t0, 0.01)
+            t_end = time.monotonic()
+            transfer_s = max(t_end - t_body_start, 0.04)
+            total_s = max(t_end - t_conn, 0.04)
             if downloaded >= 8192:
-                speed_kbps = (downloaded * 8.0) / (elapsed_s * 1000.0)
+                speed_kbps = (downloaded * 8.0) / (transfer_s * 1000.0)
                 return {
                     "speed_kbps": round(speed_kbps, 1),
                     "bytes_downloaded": downloaded,
-                    "duration_ms": int(round(elapsed_s * 1000.0)),
+                    "duration_ms": int(round(total_s * 1000.0)),
+                    "transfer_ms": int(round(transfer_s * 1000.0)),
+                    "ttfb_ms": ttfb_ms,
                     "url": url,
                 }
         except Exception:
@@ -1079,7 +1173,7 @@ def measure_throughput_kbps(
                 break
             continue
 
-    return {"speed_kbps": 0.0, "bytes_downloaded": 0, "duration_ms": 0, "url": ""}
+    return {"speed_kbps": 0.0, "bytes_downloaded": 0, "duration_ms": 0, "transfer_ms": 0, "ttfb_ms": 0, "url": ""}
 
 
 def classify_node_tier(
@@ -1159,19 +1253,24 @@ def compute_quality_score(
     """
     score = 0.0
 
-    # 1. Tier & abuse/proxy posture
+    # 1. Proxy/VPN risk posture & cleanliness
     if tier == "纯净":
-        score += 30.0
+        score += 24.0
     elif tier == "优选":
-        score += 18.0
+        score += 14.0
     else:
-        score += 8.0
+        score += 6.0
 
-    if isinstance(ip_info, dict):
-        if ip_info.get("is_abuser"):
-            score -= 10.0
-        if ip_info.get("proxy") or ip_info.get("is_proxy") or ip_info.get("is_vpn") or ip_info.get("is_tor"):
-            score -= 6.0
+    _, pv_flagged = classify_proxy_vpn_status(ip_info)
+    if pv_flagged is False:
+        score += 14.0
+        if isinstance(ip_info, dict) and ip_info.get("is_datacenter") is False and not ip_info.get("is_abuser"):
+            score += 8.0
+    elif pv_flagged is True:
+        score -= 16.0
+
+    if isinstance(ip_info, dict) and ip_info.get("is_abuser"):
+        score -= 10.0
 
     # 2. Native vs Broadcast IP
     if ip_origin == "原生":
@@ -1288,6 +1387,13 @@ def evaluate_node_quality(
             cloudflare_url=cloudflare_url,
             youtube_url=youtube_url,
         )
+        # If query_exit_ip_info already completed live HTTPS probes (e.g. cloudflare_trace/ipapi.is),
+        # don't kill the node on a transient single 204 timeout.
+        exit_src = str(ip_info.get("source", ""))
+        if not conn["https_ok"] and exit_src in ("cloudflare_trace", "ipapi.is"):
+            conn["https_ok"] = True
+            conn["cloudflare_ok"] = True
+            conn["reason"] = f"exit_https_alive({exit_src})"
         if not conn["https_ok"]:
             return None
 
@@ -1302,6 +1408,12 @@ def evaluate_node_quality(
             speed_kbps = float(sp["speed_kbps"])
 
     ip_origin = str(ip_info.get("ip_origin", "未知"))
+    pv_label, pv_flagged = classify_proxy_vpn_status(ip_info)
+    if ip_info.get("proxy_vpn_status"):
+        pv_label = str(ip_info["proxy_vpn_status"])
+    if "proxy_flagged" in ip_info:
+        pv_flagged = ip_info["proxy_flagged"]
+
     tier = classify_node_tier(
         ip_info,
         int(delay_ms),
@@ -1326,6 +1438,8 @@ def evaluate_node_quality(
     return {
         "cc": cc,
         "tier": tier,
+        "proxy_vpn_status": pv_label,
+        "proxy_flagged": pv_flagged,
         "ip_origin": ip_origin,
         "ip_origin_reason": str(ip_info.get("ip_origin_reason", "")),
         "delay": int(delay_ms),
@@ -1350,12 +1464,20 @@ def score_and_rank_nodes(
     max_nodes: Optional[int] = None,
     cc_region_names: Optional[Dict[str, str]] = None,
     include_origin_in_name: bool = True,
+    incumbent_fps: Optional[Set[str]] = None,
+    incumbent_top_fps: Optional[Set[str]] = None,
+    incumbent_bonus: float = 6.0,
+    incumbent_top_bonus: float = 2.5,
+    get_fingerprint_fn: Optional[Callable[[Dict[str, Any]], str]] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Score, globally rank, optionally cap, and deterministically rename qualified
-    nodes for a single flat PROXY + 漏网之鱼 Clash configuration.
+    Score, apply healthy-incumbent hysteresis, globally rank, optionally cap,
+    and deterministically rename qualified nodes for a flat PROXY + 漏网之鱼 config.
     """
     region_map = cc_region_names or DEFAULT_CC_REGION_NAMES
+    fp_fn = get_fingerprint_fn or proxy_fingerprint
+    inc_set = set(incumbent_fps) if incumbent_fps else set()
+    inc_top_set = set(incumbent_top_fps) if incumbent_top_fps else set()
     valid = [dict(r) for r in verified_records if r.get("cc") != "CN"]
 
     for rec in valid:
@@ -1373,11 +1495,40 @@ def score_and_rank_nodes(
                 ip_info=rec.get("ip_info"),
             )
 
+        base_score = float(rec.get("quality_score", 0.0))
+        sticky_bonus = 0.0
+        proxy_dict = rec.get("proxy")
+        fp = fp_fn(proxy_dict) if isinstance(proxy_dict, dict) else ""
+        is_healthy_incumbent = (
+            bool(fp)
+            and fp in inc_set
+            and rec.get("google_clean") is not False
+            and int(rec.get("delay_ms", rec.get("delay", 9999))) <= 1200
+            and (float(rec.get("speed_kbps", 0.0)) >= 120.0 or bool(rec.get("cloudflare_ok", False)))
+        )
+        if is_healthy_incumbent:
+            sticky_bonus += incumbent_bonus
+            if fp in inc_top_set:
+                sticky_bonus += incumbent_top_bonus
+            rec["is_incumbent"] = True
+        else:
+            rec["is_incumbent"] = False
+
+        rec["sort_score"] = round(base_score + sticky_bonus, 2)
+
+    def _proxy_flag_priority(rec: Dict[str, Any]) -> int:
+        if rec.get("proxy_flagged") is False:
+            return 0
+        if rec.get("proxy_flagged") is None:
+            return 1
+        return 2
+
     valid.sort(
         key=lambda x: (
-            -float(x.get("quality_score", 0.0)),
-            TIER_PRIORITY.get(str(x.get("tier", "普通")), 9),
+            -float(x.get("sort_score", x.get("quality_score", 0.0))),
+            _proxy_flag_priority(x),
             ORIGIN_PRIORITY.get(str(x.get("ip_origin", "未知")), 9),
+            TIER_PRIORITY.get(str(x.get("tier", "普通")), 9),
             int(x.get("delay_ms", x.get("delay", 9999))),
             int(x.get("jitter_ms", 0)),
         )
@@ -1391,14 +1542,25 @@ def score_and_rank_nodes(
 
     for item in valid:
         cc = str(item.get("cc", "OTHER"))
-        tier = str(item.get("tier", "普通"))
         origin = str(item.get("ip_origin", "未知"))
-        tier_label = f"{tier}·{origin}" if (include_origin_in_name and origin in ("原生", "广播")) else tier
+        pv_status = str(item.get("proxy_vpn_status") or "").strip()
+        if not pv_status:
+            pv_status, pv_flagged = classify_proxy_vpn_status(item.get("ip_info"))
+            item["proxy_vpn_status"] = pv_status
+            if "proxy_flagged" not in item:
+                item["proxy_flagged"] = pv_flagged
 
-        naming_counter[(cc, tier_label)] += 1
-        seq = naming_counter[(cc, tier_label)]
+        if pv_status == "未知" and origin == "未知":
+            badge = "未知"
+        elif include_origin_in_name:
+            badge = f"{pv_status}·{origin}"
+        else:
+            badge = pv_status
+
+        naming_counter[(cc, badge)] += 1
+        seq = naming_counter[(cc, badge)]
         cc_cn = region_map.get(cc, cc)
-        new_name = f"{cc_cn} | {tier_label} | {seq:02d}"
+        new_name = f"{cc_cn}|{badge}|{seq:02d}"
 
         node_dict = dict(item["proxy"])
         node_dict["name"] = new_name
@@ -1432,7 +1594,7 @@ def _extract_state_snapshot(
         if fp not in seen:
             seen.add(fp)
             fps.append(fp)
-        if rec.get("tier") == "纯净" or rec.get("ip_origin") == "原生":
+        if rec.get("proxy_flagged") is False or rec.get("tier") == "纯净" or rec.get("ip_origin") == "原生":
             if fp not in high_tier_fps:
                 high_tier_fps.append(fp)
 
@@ -1465,27 +1627,37 @@ def load_push_state(state_file: Path = DEFAULT_PUSH_STATE_FILE) -> Optional[Dict
 def should_push_rolling_update(
     final_records: List[Dict[str, Any]],
     *,
+    all_verified_records: Optional[List[Dict[str, Any]]] = None,
     state_file: Path = DEFAULT_PUSH_STATE_FILE,
     now_ts: Optional[float] = None,
     max_staleness_sec: float = 21600.0,
-    min_count_delta: int = 3,
-    count_delta_ratio: float = 0.15,
-    turnover_threshold: float = 0.20,
+    min_count_delta: int = 5,
+    count_delta_ratio: float = 0.20,
+    turnover_threshold: float = 0.42,
     top_n: int = 5,
-    high_tier_delta_threshold: int = 2,
+    high_tier_delta_threshold: int = 12,
+    high_tier_loss_threshold: int = 3,
     get_fingerprint_fn: Optional[Callable[[Dict[str, Any]], str]] = None,
 ) -> Tuple[bool, str, Dict[str, Any]]:
     """
     Decide whether the latest run warrants a Git commit/push + CDN purge.
 
-    Local historical state (saved_working_nodes.yaml & historical_meta.json)
-    should still be updated every run regardless of this gate's decision.
+    Avoids pushing on harmless latency swaps among live incumbents: pushes when
+    a previous Top-N node genuinely went offline (absent from qualified pool) or
+    dropped out of the final pool, when high-tier coverage materially drops/shifts,
+    when set turnover crosses threshold, or on staleness heartbeat.
     """
     if not final_records:
         return (False, "empty_final_records", {"node_count": 0})
 
+    fp_fn = get_fingerprint_fn or proxy_fingerprint
     curr_ts = float(time.time() if now_ts is None else now_ts)
-    curr = _extract_state_snapshot(final_records, top_n=top_n, get_fingerprint_fn=get_fingerprint_fn)
+    curr = _extract_state_snapshot(final_records, top_n=top_n, get_fingerprint_fn=fp_fn)
+    if all_verified_records:
+        curr_all = _extract_state_snapshot(all_verified_records, top_n=top_n, get_fingerprint_fn=fp_fn)
+        curr_all_fps = set(curr_all["fingerprints"])
+    else:
+        curr_all_fps = set(curr["fingerprints"])
 
     prev = load_push_state(state_file)
     initial_summary = {
@@ -1524,19 +1696,25 @@ def should_push_rolling_update(
     turnover = (sym_diff_cnt / union_cnt) if union_cnt > 0 else 0.0
 
     prev_top_raw = prev.get("top_fingerprints", [])
-    prev_top = list(prev_top_raw) if isinstance(prev_top_raw, list) else []
-    curr_top = list(curr["top_fingerprints"])
+    prev_top = [str(fp) for fp in prev_top_raw[:max(1, top_n)] if fp] if isinstance(prev_top_raw, list) else []
+    top_down = [fp for fp in prev_top if fp not in curr_all_fps]
+    top_evicted_cnt = len(set(prev_top) - curr_fps)
+
     prev_high_raw = prev.get("high_tier_fingerprints", [])
     prev_high = {str(fp) for fp in prev_high_raw if fp} if isinstance(prev_high_raw, list) else set()
     curr_high = set(curr["high_tier_fingerprints"])
     high_churn = len(curr_high ^ prev_high)
+    high_lost = len(prev_high - curr_all_fps)
 
     metrics: Dict[str, Any] = {
         "prev_count": prev_count,
         "curr_count": curr_count,
         "turnover_ratio": round(turnover, 4),
         "sym_diff_count": sym_diff_cnt,
+        "top_down_count": len(top_down),
+        "top_evicted_count": top_evicted_cnt,
         "high_tier_churn": high_churn,
+        "high_tier_lost": high_lost,
         "elapsed_sec": int(round(elapsed)),
         "proxies_hash": curr["proxies_hash"],
     }
@@ -1544,22 +1722,35 @@ def should_push_rolling_update(
     if elapsed >= max_staleness_sec:
         return (True, f"max_staleness_exceeded({int(elapsed)}s>={int(max_staleness_sec)}s)", metrics)
 
+    if prev.get("label_schema") != LABEL_SCHEMA_VERSION:
+        return (True, f"label_schema_upgraded({prev.get('label_schema')}->{LABEL_SCHEMA_VERSION})", metrics)
+
     count_threshold = max(min_count_delta, int(math.floor(count_delta_ratio * prev_count)))
     if abs(curr_count - prev_count) >= count_threshold:
         return (True, f"node_count_delta({prev_count}->{curr_count}>={count_threshold})", metrics)
 
+    if prev_top and top_down:
+        return (True, f"top{top_n}_node_down({len(top_down)})", metrics)
+
+    if prev_top and ((prev_top[0] not in curr_fps) or top_evicted_cnt >= 2):
+        return (True, f"top{top_n}_evicted(top1_gone={prev_top[0] not in curr_fps},evicted={top_evicted_cnt})", metrics)
+
     if turnover >= turnover_threshold:
         return (True, f"turnover_ratio({turnover:.1%}>={turnover_threshold:.0%})", metrics)
 
-    if set(curr_top) != set(prev_top) or (prev_top and curr_top and curr_top[0] != prev_top[0]):
-        return (True, f"top{top_n}_quality_set_changed", metrics)
+    eff_high_lost_threshold = max(high_tier_loss_threshold, int(math.ceil(0.25 * len(prev_high)))) if prev_high else high_tier_loss_threshold
+    if high_lost >= eff_high_lost_threshold:
+        return (True, f"high_tier_lost({high_lost}>={eff_high_lost_threshold})", metrics)
 
     if high_churn >= high_tier_delta_threshold:
         return (True, f"high_tier_churn({high_churn}>={high_tier_delta_threshold})", metrics)
 
     return (
         False,
-        f"below_push_threshold(turnover={turnover:.1%},count={prev_count}->{curr_count},age={int(elapsed)}s)",
+        (
+            f"below_push_threshold(turnover={turnover:.1%},top_down={len(top_down)},"
+            f"high_lost={high_lost},high_churn={high_churn},age={int(elapsed)}s)"
+        ),
         metrics,
     )
 
@@ -1576,6 +1767,7 @@ def save_push_state(
     curr_ts = float(time.time() if now_ts is None else now_ts)
     snap = _extract_state_snapshot(final_records, top_n=top_n, get_fingerprint_fn=get_fingerprint_fn)
     payload = {
+        "label_schema": LABEL_SCHEMA_VERSION,
         "last_push_ts": curr_ts,
         "last_push_utc": datetime.fromtimestamp(curr_ts, tz=timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC"),
         **snap,

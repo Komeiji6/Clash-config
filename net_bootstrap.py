@@ -133,13 +133,13 @@ def gh_mirrors(
     path: str,
     extra_urls: Optional[Sequence[str]] = None,
 ) -> List[str]:
-    """生成 GitHub 订阅源的多镜像故障转移列表 (jsDelivr CDN -> ghfast 国内加速 -> raw 直连)。"""
+    """生成 GitHub 订阅源的多镜像故障转移列表 (raw 实时最新 -> ghfast 国内加速 -> jsDelivr CDN 兜底)。"""
     clean_path = path.lstrip("/")
     raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{clean_path}"
     urls = [
-        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{clean_path}",
-        f"https://ghfast.top/{raw_url}",
         raw_url,
+        f"https://ghfast.top/{raw_url}",
+        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{clean_path}",
     ]
     if extra_urls:
         for u in extra_urls:
@@ -346,9 +346,9 @@ def select_best_saved_nodes(
         seen_fps.add(fp)
 
         name = str(p.get("name", ""))
-        if "纯净" in name:
+        if ("非代理" in name or "未标代理" in name or "纯净" in name) and "原生" in name:
             tier_rank = 0
-        elif "优选" in name:
+        elif "非代理" in name or "未标代理" in name or "纯净" in name or "原生" in name or "优选" in name:
             tier_rank = 1
         else:
             tier_rank = 2
@@ -1308,14 +1308,19 @@ def fetch_urls_with_fallback(
     返回 `(response_text, matched_url, transport_used)`，其中 `transport_used` 为
     `"direct"` / `"proxy"` / `"none"`。
     """
-    req_headers = headers or {"User-Agent": "ClashMeta/1.19.34"}
+    req_headers = headers or {
+        "User-Agent": "ClashMeta/1.19.34",
+        "Cache-Control": "no-cache",
+        "Pragma": "no-cache",
+    }
 
     def _try_list(url_list: Sequence[str], proxies: Optional[Dict[str, str]]) -> Tuple[Optional[str], Optional[str]]:
+        req_timeout = (min(float(timeout), 4.5), float(timeout))
         with requests.Session() as s:
             s.trust_env = False
             for url in url_list:
                 try:
-                    resp = s.get(url, headers=req_headers, proxies=proxies, timeout=timeout)
+                    resp = s.get(url, headers=req_headers, proxies=proxies, timeout=req_timeout)
                     resp.raise_for_status()
                     text = resp.text
                     if validator is None or validator(text):
