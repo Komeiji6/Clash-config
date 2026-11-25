@@ -72,13 +72,12 @@ dns:
     - 240.0.0.0/4
     - 0.0.0.0/32
 proxies:
-- type: anytls
-  name: 香港|非代理·原生|01
+- name: 香港|非代理·原生|01
   server: ibsdsf.df6h451rh.xin
   port: 443
+  type: anytls
   password: 2902c46c8493
-  tls: true
-  servername: docs.microsoft.com
+  udp: true
   sni: docs.microsoft.com
   skip-cert-verify: true
 - name: 香港|非代理·原生|02
@@ -100,106 +99,89 @@ proxies:
   sni: docs.microsoft.com
   skip-cert-verify: true
   client-fingerprint: chrome
-- name: 荷兰|非代理·原生|01
-  type: vless
-  server: 5.255.99.21
+- name: 美国|非代理·原生|01
+  server: cos-cdn-g.alicdn.win
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  type: vless
+  uuid: 3bb77d95-fc42-4fa5-9865-1a42dd4d9ff6
   tls: true
-  network: grpc
-  servername: nlc.899themes.pro
-  client-fingerprint: firefox
+  servername: mms-statlc-ig7dmg-e.oppocc.men
+  client-fingerprint: safari
+  network: ws
+  ws-opts:
+    path: /newlogin/login.do
+    headers:
+      Host: mms-static-origin-e.oppocc.men
   udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- type: hysteria
-  name: 美国|非代理·原生|01
-  server: 137.175.82.41
-  port: 20022
-  password: dongtaiwang.com
-  tls: true
-  servername: bing.com
-  sni: bing.com
-  skip-cert-verify: true
-  alpn:
-  - h3
-  up: '11'
-  down: '55'
-  auth-str: dongtaiwang.com
-- name: 挪威|非代理·原生|01
-  type: vless
-  server: 91.189.183.26
+- name: 美国|非代理·原生|02
+  server: cos-cdn-g.alicdn.win
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  type: vless
+  uuid: c7678d5b-d2b6-40d8-bbf7-dfbfba355f7e
   tls: true
-  network: tcp
-  flow: xtls-rprx-vision
-  servername: noc.899themes.pro
-  client-fingerprint: firefox
+  servername: mms-statlc-oyu9nl-e.oppocc.men
+  client-fingerprint: qq
+  network: ws
+  ws-opts:
+    path: /newlogin/login.do
+    headers:
+      Host: mms-static-origin-e.oppocc.men
   udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-- name: 挪威|非代理·原生|02
-  type: vless
-  server: 104.233.8.78
+- name: 美国|非代理·原生|03
+  server: 172.66.213.98
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: noa.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 香港|非代理·原生|03
   type: vless
-  server: 210.0.244.192
-  port: 443
-  uuid: e94942af-e33f-4b1b-8b36-c1a8518d71c3
+  uuid: 366449c5-ac1e-4314-8142-27a6b1c8c0fb
   tls: true
-  network: tcp
-  servername: cloudflare.com
+  servername: us5-cdn.xyn.lgbt
   client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /yn-lax-fb366a66e8526ebc4a311464
+    headers:
+      Host: us5-cdn.xyn.lgbt
   udp: true
-  reality-opts:
-    public-key: GJKLu2oIjaK0pWBB5Xlfu3lKUj8uZktESogwQlLVJTw
-    short-id: ''
-- name: 亚美尼亚|非代理·原生|01
+- name: 瑞士|非代理·原生|01
   type: vless
-  server: 91.195.254.183
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  server: mcicloudnnnn.belzema.ir
+  port: 10005
+  uuid: 20486037-c2ae-4c07-a459-f58ca83cf08a
   tls: true
   network: tcp
-  flow: xtls-rprx-vision
-  servername: ama.899themes.pro
-  client-fingerprint: firefox
+  servername: play.googleapis.com
+  client-fingerprint: qq
   udp: true
   reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-- name: 摩尔多瓦|非代理·原生|01
-  type: vless
-  server: 217.156.123.246
+    public-key: 7aICTN0hv6bhd8bYOjNZniDYSXgD20LunZ3BW6_Zyk4
+    short-id: ''
+- name: 香港|非代理·广播|01
+  server: hkg.kkp.us.ci
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  type: vless
+  uuid: aff1b196-478c-425a-9403-7ea15d9aafdf
   tls: true
-  network: grpc
-  servername: mda.899themes.pro
-  client-fingerprint: firefox
+  servername: hkg.kkp.us.ci
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /487e07e6-2930-4e71-99b3-6792e5909f16
+    headers:
+      Host: hkg.kkp.us.ci
   udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
+- name: 香港|非代理·广播|02
+  server: 152.175.9.55
+  port: 443
+  type: vless
+  uuid: aff1b196-478c-425a-9403-7ea15d9aafdf
+  tls: true
+  servername: hkg.kkp.us.ci
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /487e07e6-2930-4e71-99b3-6792e5909f16
+    headers:
+      Host: hkg.kkp.us.ci
+  udp: true
 - name: 美国|非代理·广播|01
   type: hysteria2
   server: 37.123.193.151
@@ -208,91 +190,6 @@ proxies:
   skip-cert-verify: true
   udp: true
   sni: www.bing.com
-- name: 俄罗斯|非代理·原生|01
-  server: 136.148.83.70
-  port: 443
-  type: vless
-  uuid: 00000000-0000-0001-0000-000000000000
-  tls: true
-  servername: aszbk-ru-78dc.my-fade.cloud
-  client-fingerprint: qq
-  network: tcp
-  udp: true
-- name: 波兰|非代理·广播|01
-  type: vless
-  server: 185.104.194.124
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: pla.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 英国|非代理·广播|01
-  type: vless
-  server: 185.81.113.253
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: gba.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 瑞典|非代理·广播|01
-  type: vless
-  server: 79.141.174.123
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: sea.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 爱沙尼亚|非代理·广播|01
-  type: vless
-  server: 94.126.224.41
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: eea.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 保加利亚|非代理·广播|01
-  type: vless
-  server: 195.123.228.125
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: itb.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
 - name: 德国|非代理·广播|01
   server: 193.160.208.240
   port: 443
@@ -306,20 +203,6 @@ proxies:
     path: /assets/twru01/
     mode: auto
   udp: true
-- name: 美国|非代理·广播|02
-  type: vless
-  server: 98.142.251.69
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: tcp
-  flow: xtls-rprx-vision
-  servername: usc.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
 - name: 美国|代理·原生|01
   type: vless
   server: 179.255.104.98
@@ -332,35 +215,20 @@ proxies:
   reality-opts:
     public-key: eohUrMrf6VZGvWDyEuc65DVEtfaPoKhUx8c9TT9QERk
     short-id: 2cd4c08a84f8492b
-- name: 保加利亚|非代理·广播|02
-  type: vless
-  server: 131.123.38.59
+- name: 印度|非代理·广播|01
+  server: 104.18.46.116
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: bga.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 德国|非代理·广播|02
   type: vless
-  server: 46.28.69.173
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  uuid: 84d4b268-0a82-4c9d-9517-03ea78e8d505
   tls: true
-  network: tcp
-  flow: xtls-rprx-vision
-  servername: dec.899themes.pro
-  client-fingerprint: firefox
+  servername: 3xui.995677.xyz
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /vless/84d4b268-0a82-4c9d-9517-03ea78e8d505
+    headers:
+      Host: 3xui.995677.xyz
   udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
 - name: 意大利|非代理·广播|01
   type: ss
   server: 202.50.253.27
@@ -368,71 +236,147 @@ proxies:
   cipher: aes-256-gcm
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   udp: true
-- name: 法国|非代理·广播|01
-  type: vless
-  server: 213.183.45.23
-  port: 8454
-  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
-  tls: true
-  network: ws
-  servername: store.plumstatic.com
-  client-fingerprint: firefox
-  udp: true
-  ws-opts:
-    path: /ws
 - name: 意大利|非代理·广播|02
-  type: ss
-  server: 202.50.253.36
-  port: 19999
-  cipher: aes-256-gcm
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  udp: true
-- name: 美国|非代理·广播|03
-  type: vless
-  server: 141.193.154.34
-  port: 10001
-  uuid: 21a54f58-b362-444f-b834-fdfa9602fce8
-  tls: true
-  network: tcp
-  servername: cloudflare.com
-  client-fingerprint: chrome
-  udp: true
-  reality-opts:
-    public-key: 7AqAdnGRTolgqNAC_ZPTmWux3TRTatBAmIey_DSrv1Y
-    short-id: ''
-- name: 意大利|非代理·广播|03
   type: ss
   server: 202.50.253.18
   port: 19999
   cipher: aes-256-gcm
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   udp: true
-- name: 新加坡|非代理·广播|01
+- name: 印度|非代理·广播|02
+  server: 172.66.207.159
+  port: 443
   type: vless
+  uuid: 84d4b268-0a82-4c9d-9517-03ea78e8d505
+  tls: true
+  servername: 3xui.995677.xyz
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /vless/84d4b268-0a82-4c9d-9517-03ea78e8d505
+    headers:
+      Host: 3xui.995677.xyz
+  udp: true
+- name: 意大利|非代理·广播|03
+  type: ss
+  server: 202.50.253.36
+  port: 19999
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 韩国|非代理·广播|01
+  server: 119.28.150.131
+  port: 4434
+  type: ss
+  cipher: aes-256-gcm
+  password: dXP0rIi4TPrbqxR938oQDw==
+  udp: true
+- name: 印度|非代理·广播|03
+  server: 104.25.252.78
+  port: 443
+  type: vless
+  uuid: 84d4b268-0a82-4c9d-9517-03ea78e8d505
+  tls: true
+  servername: 3xui.995677.xyz
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /vless/84d4b268-0a82-4c9d-9517-03ea78e8d505
+    headers:
+      Host: 3xui.995677.xyz
+  udp: true
+- name: 新加坡|非代理·广播|01
   server: 213.183.45.23
   port: 8444
+  type: vless
   uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
   tls: true
-  network: ws
   servername: media.plumstatic.com
   client-fingerprint: firefox
-  udp: true
+  network: ws
   ws-opts:
     path: /ws
-- name: 爱沙尼亚|代理·原生|01
-  type: vless
-  server: 80.79.121.147
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: tcp
-  flow: xtls-rprx-vision
-  servername: eec.899themes.pro
-  client-fingerprint: firefox
   udp: true
+- name: 印度|非代理·广播|04
+  server: 104.18.15.246
+  port: 443
+  type: vless
+  uuid: 84d4b268-0a82-4c9d-9517-03ea78e8d505
+  tls: true
+  servername: 3xui.995677.xyz
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /vless/84d4b268-0a82-4c9d-9517-03ea78e8d505
+    headers:
+      Host: 3xui.995677.xyz
+  udp: true
+- name: 芬兰|非代理·广播|01
+  server: mail3.besttotaldns.com
+  port: 443
+  type: vless
+  uuid: 57fe142e-1522-47ae-af55-bd8daf6273df
+  tls: true
+  alpn:
+  - http/1.1
+  servername: mail3.besttotaldns.com
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /wo9a5v3jcz
+    headers:
+      Host: mail3.besttotaldns.com
+  udp: true
+- name: 泰国|非代理·广播|01
+  server: 47.87.64.133
+  port: 18565
+  type: vmess
+  uuid: 853a251f-de85-40cc-84a6-ab8748c7258c
+  alterId: 0
+  cipher: auto
+  tls: false
+  skip-cert-verify: true
+  udp: true
+- alpn:
+  - h2
+  client-fingerprint: chrome
+  grpc-opts:
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯|非代理·原生|01
+  network: grpc
+  port: 443
+  server: leviko-ru4448.shopingggg.ir
+  servername: vps3.nemnogogo.com
+  tls: true
+  type: vless
+  udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+  xudp: true
+- name: 泰国|非代理·广播|02
+  server: 47.81.36.173
+  port: 18565
+  type: vmess
+  uuid: 853a251f-de85-40cc-84a6-ab8748c7258c
+  alterId: 0
+  cipher: auto
+  tls: false
+  skip-cert-verify: true
+  udp: true
+- type: vless
+  name: 日本|非代理·广播|01
+  server: jp2upload.jumpernode.site
+  port: 443
+  uuid: f325fb7d-cad5-4ac8-8888-3f39b4b9d1ca
+  flow: xtls-rprx-vision
+  udp: true
+  tls: true
+  servername: shop.business.amazon.com
+  sni: shop.business.amazon.com
+  skip-cert-verify: true
+  client-fingerprint: chrome
   reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
+    public-key: GeKuYNeAqQQkTN9OMJxXA9I-rXs7IiGh4Sl82crCITc
+    short-id: 83faf94a0e
 - client-fingerprint: firefox
   grpc-opts:
     grpc-service-name: mobile.api.Event
@@ -446,25 +390,22 @@ proxies:
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
   xudp: true
-- alpn:
-  - h2
-  client-fingerprint: firefox
-  grpc-opts:
-    grpc-service-name: mobile.api.Event
-  name: 俄罗斯|非代理·原生|03
-  network: grpc
-  port: 443
-  server: vps3.nemnogogo.com
-  servername: vps3.nemnogogo.com
-  tls: true
+- name: 法国|非代理·广播|01
+  server: 213.183.45.23
+  port: 8454
   type: vless
+  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
+  tls: true
+  servername: store.plumstatic.com
+  client-fingerprint: firefox
+  network: ws
+  ws-opts:
+    path: /ws
   udp: true
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-  xudp: true
 - client-fingerprint: firefox
   grpc-opts:
     grpc-service-name: mobile.api.Event
-  name: 俄罗斯|非代理·原生|04
+  name: 俄罗斯|非代理·原生|03
   network: grpc
   port: 443
   server: 201.51.12.98
@@ -474,21 +415,70 @@ proxies:
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
   xudp: true
+- type: vless
+  name: 美国|非代理·广播|02
+  server: jp2search.jumpernode.site
+  port: 443
+  uuid: d1f56b03-7b28-4b0a-81f1-d06b67358e79
+  flow: xtls-rprx-vision
+  udp: true
+  tls: true
+  servername: images.samsung.com
+  sni: images.samsung.com
+  skip-cert-verify: true
+  client-fingerprint: chrome
+  reality-opts:
+    public-key: CKfGUIOy-k2OfwtxsqeHIQWwR29WAbypOvKH4bAVo18
+    short-id: 732d5d
+- name: 阿联酋|非代理·广播|01
+  type: vless
+  server: 213.183.41.31
+  port: 8459
+  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
+  tls: true
+  network: ws
+  servername: photos.plumstatic.com
+  client-fingerprint: firefox
+  udp: true
+  ws-opts:
+    path: /ws
 - alpn:
   - h2
-  client-fingerprint: chrome
+  client-fingerprint: firefox
   grpc-opts:
     grpc-service-name: mobile.api.Event
-  name: 俄罗斯|非代理·原生|05
+  name: 俄罗斯|非代理·原生|04
   network: grpc
   port: 443
-  server: leviko-ru4448.shopingggg.ir
+  server: vps3.nemnogogo.com
   servername: vps3.nemnogogo.com
   tls: true
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
   xudp: true
+- name: 日本|非代理·广播|02
+  type: vless
+  server: 213.183.41.31
+  port: 8463
+  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
+  tls: true
+  network: ws
+  servername: share.plumstatic.com
+  client-fingerprint: firefox
+  udp: true
+  ws-opts:
+    path: /ws
+- name: 芬兰|非代理·广播|02
+  server: 168.113.253.81
+  port: 443
+  type: vless
+  uuid: 00000000-0000-0001-0000-000000000000
+  tls: true
+  servername: renycbfoxizjxwnlle.fcloudservices.site
+  client-fingerprint: firefox
+  network: tcp
+  udp: true
 - type: hysteria
   name: 美国|代理·原生|02
   server: 38.6.222.132
@@ -503,138 +493,28 @@ proxies:
   up: '11'
   down: '55'
   auth-str: dongtaiwang.com
-- name: 波兰|非代理·广播|02
-  type: vless
-  server: 82.118.20.12
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: tcp
-  flow: xtls-rprx-vision
-  servername: plc.899themes.pro
-  client-fingerprint: firefox
+- name: 韩国|非代理·广播|02
+  server: 3.36.92.106
+  port: 8443
+  type: ss
+  cipher: chacha20-ietf-poly1305
+  password: 7e68e32f-8015-4f37-9082-70e8b0b58043
   udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-- name: 阿联酋|非代理·广播|01
-  type: vless
-  server: 213.183.41.31
-  port: 8459
-  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
-  tls: true
-  network: ws
-  servername: photos.plumstatic.com
-  client-fingerprint: firefox
-  udp: true
-  ws-opts:
-    path: /ws
-- name: 德国|非代理·广播|03
-  server: ws3.falmero.store
+- name: 韩国|非代理·广播|03
+  server: 104.25.128.15
   port: 443
   type: vless
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  uuid: db906786-8c49-4b17-9182-cea680ef954d
   tls: true
-  servername: paperbirch.merlano.monster
-  client-fingerprint: firefox
+  servername: krc.80782636.xyz
+  client-fingerprint: chrome
   network: ws
   ws-opts:
-    path: /api/de1/stream
+    path: /kw7x2mq9
     headers:
-      Host: paperbirch.merlano.monster
+      Host: krc.80782636.xyz
   udp: true
-- name: 芬兰|非代理·广播|01
-  type: vless
-  server: 82.202.139.213
-  port: 443
-  uuid: 00000000-0000-0001-0000-000000000000
-  tls: true
-  network: tcp
-  servername: osvcbrklrjmfnzoffl.fcloudservices.site
-  client-fingerprint: firefox
-  udp: true
-- name: 德国|非代理·广播|04
-  server: riverside.elvano.website
-  port: 443
-  type: vless
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  tls: true
-  alpn:
-  - h2
-  - http/1.1
-  servername: riverside.elvano.website
-  client-fingerprint: firefox
-  network: xhttp
-  xhttp-opts:
-    path: /api/de1/sync
-    host: riverside.elvano.website
-    mode: auto
-  udp: true
-- type: hysteria
-  name: 美国|代理·原生|03
-  server: 38.6.222.131
-  port: 11008
-  password: dongtaiwang.com
-  tls: true
-  servername: bing.com
-  sni: bing.com
-  skip-cert-verify: true
-  alpn:
-  - h3
-  up: '11'
-  down: '55'
-  auth-str: dongtaiwang.com
-- name: 拉脱维亚|非代理·广播|01
-  type: vless
-  server: 213.183.45.23
-  port: 8450
-  uuid: eb62cabf-5901-403a-aa0c-b1d9ed1b346d
-  tls: true
-  network: ws
-  servername: fonts.plumstatic.com
-  udp: true
-  ws-opts:
-    path: /ws
-- name: 荷兰|非代理·广播|01
-  server: SUR.Deev-Guard.ir
-  port: 15470
-  type: vless
-  uuid: d1ec39e3-ad7b-4b65-9f65-813696f9a04e
-  tls: false
-  encryption: mlkem768x25519plus.native.0rtt.zxPnV8JfYCCBaYEMhAz0LUK2vVHy4JlbyNoQGAL_zFE
-  network: tcp
-  udp: true
-- name: 法国|非代理·广播|02
-  type: vless
-  server: 94.126.226.3
-  port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
-  tls: true
-  network: grpc
-  servername: fra.899themes.pro
-  client-fingerprint: firefox
-  udp: true
-  reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 美国|非代理·原生|02
-  type: vmess
-  server: guanwang.awsno.com
-  port: 443
-  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
-  alterId: 0
-  cipher: auto
-  udp: true
-  tls: true
-  servername: guanwang.awsno.com
-  network: ws
-  ws-opts:
-    path: /hls/cctv5phd.m3u8
-    headers:
-      Host: guanwang.awsno.com
-- name: 美国|非代理·原生|03
+- name: 美国|非代理·原生|04
   type: vmess
   server: 172.67.190.164
   port: 443
@@ -650,7 +530,7 @@ proxies:
     path: /hls/cctv5phd.m3u8
     headers:
       Host: guanwang.awsno.com
-- name: 美国|非代理·原生|04
+- name: 美国|非代理·原生|05
   type: vmess
   server: 172.64.145.93
   port: 443
@@ -666,34 +546,35 @@ proxies:
     path: /hls/cctv5phd.m3u8
     headers:
       Host: guanwang.awsno.com
-- down: ''
-  fingerprint: ''
-  name: 英国|代理·广播|01
-  obfs: ''
-  obfs-password: ''
-  password: 900c8c92-1979-4c7c-8f2f-63e87d53d8fe
-  port: 13337
-  server: 128.254.186.190
-  skip-cert-verify: false
-  sni: mother-earth.fyi
-  type: hysteria2
-  up: ''
-- name: 德国|代理·广播|01
-  type: vless
-  server: 95.85.230.31
+- name: 美国|非代理·原生|06
+  type: vmess
+  server: guanwang.awsno.com
   port: 443
-  uuid: f8cb3c89-32af-4255-bebc-d90aad175069
+  uuid: 6a89a215-22bf-4bd7-9642-b95b2e09583a
+  alterId: 0
+  cipher: auto
+  udp: true
   tls: true
-  network: grpc
-  servername: dea.899themes.pro
+  servername: guanwang.awsno.com
+  network: ws
+  ws-opts:
+    path: /hls/cctv5phd.m3u8
+    headers:
+      Host: guanwang.awsno.com
+- name: 荷兰|非代理·广播|01
+  type: vless
+  server: 153.56.231.156
+  port: 443
+  uuid: a07c4d71-cc76-4a1f-bba2-269c5e768617
+  tls: true
+  network: tcp
+  servername: 8ba6c3t.nl24.h1clayd.shop
   client-fingerprint: firefox
   udp: true
   reality-opts:
-    public-key: pR39Vv5qhk8r6akOicoy6mMs4-ppSWUez8MyAXG7wwQ
-    short-id: 27350908de933e09
-  grpc-opts:
-    grpc-service-name: neurex
-- name: 英国|代理·广播|02
+    public-key: 43bHrvqzL5Sw8lvtDSE3LAlp_0WbixVc7nYcAf17bhg
+    short-id: 16b6715de8577aaa
+- name: 英国|代理·广播|01
   type: hysteria2
   server: 128.254.186.57
   port: 13337
@@ -701,20 +582,94 @@ proxies:
   skip-cert-verify: false
   udp: true
   sni: mother-earth.fyi
-- name: 加拿大|非代理·广播|01
-  type: vless
-  server: 84.54.47.216
+- name: 英国|代理·广播|02
+  type: hysteria2
+  server: uk-tube-01.stre4m.net
+  port: 13337
+  password: 900c8c92-1979-4c7c-8f2f-63e87d53d8fe
+  sni: mother-earth.fyi
+  alpn:
+  - h3
+- type: vless
+  name: 芬兰|非代理·广播|03
+  server: 136.148.83.71
   port: 443
-  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
+  uuid: 00000000-0000-0001-0000-000000000000
+  udp: true
+  tls: true
+  servername: wccfu-ru-79dc.my-fade.cloud
+  sni: wccfu-ru-79dc.my-fade.cloud
+  skip-cert-verify: true
+- name: 美国|代理·广播|01
+  type: vless
+  server: 5.78.190.181
+  port: 443
+  uuid: 9aba5792-2a79-4305-b526-2e8e6c28a500
   tls: true
   network: tcp
   flow: xtls-rprx-vision
-  servername: rucanmicro1.gangplatform.com
+  servername: www.microsoft.com
   client-fingerprint: chrome
   udp: true
   reality-opts:
-    public-key: 3U3hb-HmOG5qptCzXIt8NQE3TE40eeTJsNpBV_B9hQA
-    short-id: 1dde6750d22c5634
+    public-key: H57GGjaOzyPvjdDL-f2B9MyfYpI3xacDq8r18JFDLTk
+    short-id: 4c21271f
+- name: 意大利|代理·广播|01
+  type: ss
+  server: 202.50.253.72
+  port: 19999
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 意大利|代理·广播|02
+  type: ss
+  server: 202.50.253.90
+  port: 19999
+  cipher: aes-256-gcm
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  udp: true
+- name: 香港|非代理·广播|03
+  server: 179.253.225.20
+  port: 8443
+  type: vless
+  uuid: aff1b196-478c-425a-9403-7ea15d9aafdf
+  tls: true
+  servername: hkg.kkp.us.ci
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /487e07e6-2930-4e71-99b3-6792e5909f16
+    headers:
+      Host: hkg.kkp.us.ci
+  udp: true
+- name: 香港|非代理·广播|04
+  server: 131.143.180.19
+  port: 443
+  type: vless
+  uuid: aff1b196-478c-425a-9403-7ea15d9aafdf
+  tls: true
+  servername: hkg.kkp.us.ci
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /487e07e6-2930-4e71-99b3-6792e5909f16
+    headers:
+      Host: hkg.kkp.us.ci
+  udp: true
+- name: 香港|非代理·广播|05
+  server: 154.17.6.182
+  port: 8443
+  type: vless
+  uuid: aff1b196-478c-425a-9403-7ea15d9aafdf
+  tls: true
+  servername: hkg.kkp.us.ci
+  client-fingerprint: chrome
+  network: ws
+  ws-opts:
+    path: /487e07e6-2930-4e71-99b3-6792e5909f16
+    headers:
+      Host: hkg.kkp.us.ci
+  udp: true
 proxy-groups:
 - name: PROXY
   type: select
