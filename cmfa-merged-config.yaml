@@ -72,19 +72,35 @@ dns:
     - 240.0.0.0/4
     - 0.0.0.0/32
 proxies:
-- client-fingerprint: firefox
-  name: 德国 | 纯净 | 01
-  network: xhttp
+- client-fingerprint: chrome
+  name: 香港 | 纯净 | 01
+  password: 2902c46c8493
   port: 443
-  server: 193.160.208.240
-  servername: 193.160.208.240
-  tls: true
-  type: vless
+  server: ibsdsf.df6h451rh.xin
+  skip-cert-verify: true
+  sni: docs.microsoft.com
+  type: anytls
   udp: true
-  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
-  xhttp-opts:
-    mode: auto
-    path: /assets/twru01/
+- fingerprint: ''
+  name: 香港 | 纯净 | 02
+  password: 0324fbc29561
+  port: 443
+  server: 5641sdds.df6h451rh.xin
+  skip-cert-verify: true
+  sni: images.ctfassets.net
+  type: anytls
+  udp: true
+  username: 0324fbc29561
+- name: 台湾 | 纯净 | 01
+  password: 2902c46c8493
+  port: 443
+  server: rtifgjdr.df6h451rh.xin
+  servername: docs.microsoft.com
+  skip-cert-verify: true
+  sni: docs.microsoft.com
+  tls: true
+  type: anytls
+  udp: true
 - name: 英国 | 纯净 | 01
   server: 196.196.208.22
   port: 443
@@ -102,141 +118,91 @@ proxies:
     host: 9303d6x.fi-p1b.h1clayd.click
     mode: auto
   udp: true
-- client-fingerprint: chrome
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: 7d5abcd7d8a1
-  network: grpc
+- client-fingerprint: firefox
+  name: 德国 | 纯净 | 01
+  network: xhttp
   port: 443
+  server: 193.160.208.240
+  servername: 193.160.208.240
+  tls: true
+  type: vless
+  udp: true
+  uuid: 4777d90d-265b-4927-a0d1-63f36ed1421c
+  xhttp-opts:
+    mode: auto
+    path: /assets/twru01/
+- name: 德国 | 纯净 | 02
+  server: 13.141.36.75
+  port: 443
+  type: vless
+  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
+  tls: true
+  reality-opts:
+    public-key: jhVdP7NFUaEXGfrmOqJlMCHTvqn3fymbzPfPT6NO4i0
+    short-id: f72d4a2c7cbbacb1
+  servername: 80cb66x.nl13.h1clayd.click
+  client-fingerprint: chrome
+  network: xhttp
+  xhttp-opts:
+    path: /d610f026b146
+    host: 80cb66x.nl13.h1clayd.click
+    mode: auto
+  udp: true
+- fingerprint: ''
+  name: 台湾 | 纯净 | 02
+  password: 0324fbc29561
+  port: 443
+  server: a54ge.df6h451rh.xin
+  skip-cert-verify: true
+  sni: docs.microsoft.com
+  type: anytls
+  udp: true
+  username: 0324fbc29561
+- name: 荷兰 | 纯净 | 01
+  type: vless
+  server: 196.245.52.178
+  port: 443
+  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
+  udp: true
+  tls: true
+  servername: 15b171g.nl7.h1clayd.click
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: zbz--PMjcIC4Ggr3j-ibDf0fzXRTj0lM_HzjPJyMkVE
+    short-id: 50a749f0eccb628c
+  network: grpc
+  grpc-opts:
+    grpc-service-name: 5b79e8a94241
+- name: 以色列 | 纯净 | 01
+  type: vless
+  server: 13.141.37.245
+  port: 443
+  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
+  udp: true
+  tls: true
+  servername: 717252g.nl8.h1clayd.click
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: PD8Jdlg3xB9QY--jwQjp8PFPzCS8-Oryw6-HWBcHMFU
+    short-id: d3bd772514c87d28
+  network: grpc
+  grpc-opts:
+    grpc-service-name: 204adda7e3da
+- name: 德国 | 纯净 | 03
+  type: vless
+  server: 961ec0g.nl13.h1clayd.click
+  port: 443
+  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
+  udp: true
+  tls: true
+  servername: 961ec0g.nl13.h1clayd.click
+  client-fingerprint: chrome
   reality-opts:
     public-key: xn7KVKS5MOnsFrYrEeRS04JssBCOxh12rxegaDFyGkA
     short-id: 6d289ff0f47c0aac
-  server: 961ec0g.nl13.h1clayd.click
-  servername: 961ec0g.nl13.h1clayd.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
-  name: 德国 | 纯净 | 02
-- client-fingerprint: chrome
-  port: 443
-  reality-opts:
-    public-key: kkCGiCQCKnkozJR1KKCRNtmdBECmThCgI9VSv7iDcWI
-    short-id: 8956c57cb4c4f8d2
-  server: f0d7aft.nl13.h1clayd.click
-  servername: f0d7aft.nl13.h1clayd.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
-  name: 德国 | 纯净 | 03
-- client-fingerprint: chrome
-  port: 443
-  reality-opts:
-    public-key: l-GzBDuNuhnjxoRlZqKvT7jAt_sbVAxhGFsAttO5kXs
-    short-id: 361d0dd59c70516f
-  server: 196.196.148.85
-  servername: 5d0319t.nl7.h1clayd.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: cda0862a-0f87-4be9-8ed8-1d0c9e382839
-  name: 荷兰 | 纯净 | 01
-- alpn:
-  - h3
-  auth-str: dongtaiwang.com
-  down: '55'
-  password: dongtaiwang.com
-  port: 11008
-  server: 38.6.222.132
-  servername: bing.com
-  skip-cert-verify: true
-  sni: bing.com
-  tls: true
-  type: hysteria
-  up: '11'
-  name: 美国 | 优选 | 01
-- alpn:
-  - h3
-  auth-str: dongtaiwang.com
-  down: '55'
-  password: dongtaiwang.com
-  port: 11008
-  server: 38.6.222.131
-  servername: bing.com
-  skip-cert-verify: true
-  sni: bing.com
-  tls: true
-  type: hysteria
-  up: '11'
-  name: 美国 | 优选 | 02
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 01
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.54
-  type: ss
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 02
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.63
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 03
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.45
-  type: ss
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 04
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.72
-  type: ss
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 05
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.27
-  type: ss
-  udp: true
-- name: 德国 | 优选 | 01
-  server: 4935e4t.de25.h1clayd.click
-  port: 443
-  type: vless
-  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
-  tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: MzgB17ZFbKqs8pbC3EscTzHid_ENc-k_Cp6nXl-2knw
-    short-id: 6976d670818644cc
-  servername: 4935e4t.de25.h1clayd.click
-  client-fingerprint: ios
-  network: tcp
-  udp: true
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 06
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.36
-  type: ss
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 07
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.18
-  type: ss
-  udp: true
-- name: 德国 | 优选 | 02
-  type: ss
-  server: 47.85.227.36
-  port: 443
-  cipher: 2022-blake3-chacha20-poly1305
-  password: 3NBsnBLanPfG6i3S2GTHineswr6EeSJPb0PCeMQoGoA=
-  udp: true
+  network: grpc
+  grpc-opts:
+    grpc-service-name: 7d5abcd7d8a1
 - name: 新加坡 | 优选 | 01
   type: vless
   server: free.server.darknetlk.com
@@ -246,109 +212,143 @@ proxies:
   servername: aka.ms
   skip-cert-verify: true
   client-fingerprint: chrome
-- cipher: 2022-blake3-chacha20-poly1305
-  name: 德国 | 优选 | 03
-  password: 8yO3ANWefuuGs1lRKXECQA1FEhxlWFV2ppQMcBaZo5Y=
-  port: 443
-  server: 47.254.167.157
-  type: ss
-- client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 01
-  network: grpc
-  port: 443
-  server: 201.24.116.192
-  servername: vps3.nemnogogo.com
-  tls: true
-  type: vless
-  udp: true
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- alpn:
-  - h2
-  client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 02
-  network: grpc
-  port: 443
-  server: vps3.nemnogogo.com
-  servername: vps3.nemnogogo.com
-  tls: true
-  type: vless
-  udp: true
-  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- client-fingerprint: qq
-  name: OTHER | 优选 | 01
-  network: tcp
-  port: 443
-  server: 136.148.83.70
-  servername: aszbk-ru-78dc.my-fade.cloud
-  tls: true
-  type: vless
-  udp: true
-  uuid: 00000000-0000-0001-0000-000000000000
-  ws-opts:
-    path: /
-- alpn:
-  - h3
-  auth-str: dongtaiwang.com
-  down: '55'
-  password: dongtaiwang.com
-  port: 20022
-  server: 137.175.82.41
-  servername: bing.com
-  skip-cert-verify: true
-  sni: bing.com
-  tls: true
-  type: hysteria
-  up: '11'
-  name: 美国 | 优选 | 03
-- name: 西班牙 | 优选 | 01
-  server: api.ferrin.uk
+- name: 新加坡 | 优选 | 02
+  server: 43.163.112.174
   port: 443
   type: vless
-  uuid: 7d1a74fd-8a38-4a29-863f-5da53a9e557e
-  tls: true
-  alpn:
-  - h2
-  servername: 7d1a74fd.ferrin.uk
-  client-fingerprint: chrome
-  network: xhttp
-  xhttp-opts:
-    path: /es
-    host: api.ferrin.uk
-    mode: stream-one
-  udp: true
-- name: 德国 | 优选 | 04
-  server: 13.141.36.63
-  port: 443
-  type: vless
-  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  uuid: 0dedd47d-47b9-4ed1-9c9f-cbeecad57a68
   tls: true
   flow: xtls-rprx-vision
   reality-opts:
-    public-key: MzgB17ZFbKqs8pbC3EscTzHid_ENc-k_Cp6nXl-2knw
-    short-id: 6976d670818644cc
-  servername: 4935e4t.de25.h1clayd.click
-  client-fingerprint: firefox
+    public-key: mXQudYHNu0pebcdk1_qn-UgcmwhjaV7y9UrYu3HX7Rg
+    short-id: 0123456789abcdef
+  servername: www.cloudflare.com
+  client-fingerprint: chrome
   network: tcp
+  udp: true
+- type: hysteria
+  name: 美国 | 优选 | 01
+  server: 38.6.222.131
+  port: 11008
+  password: dongtaiwang.com
+  tls: true
+  servername: bing.com
+  sni: bing.com
+  skip-cert-verify: true
+  alpn:
+  - h3
+  up: '11'
+  down: '55'
+  auth-str: dongtaiwang.com
+- type: hysteria
+  name: 美国 | 优选 | 02
+  server: 38.6.222.132
+  port: 11008
+  password: dongtaiwang.com
+  tls: true
+  servername: bing.com
+  sni: bing.com
+  skip-cert-verify: true
+  alpn:
+  - h3
+  up: '11'
+  down: '55'
+  auth-str: dongtaiwang.com
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 01
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.72
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 02
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.81
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 03
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.36
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 04
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.99
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 05
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.90
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 06
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.63
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 07
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.54
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- name: 立陶宛 | 优选 | 01
+  server: 13.141.36.141
+  port: 443
+  type: vless
+  uuid: cae99415-10a6-4317-81bd-19a4586b5d76
+  tls: true
+  reality-opts:
+    public-key: KEbWnNTqeFDxwCQqyvVvyEhnK7QUIrwhq9-9geUEOmY
+    short-id: 90190d82f1581926
+  servername: 7bc4aex.lt3.h1clayd.click
+  client-fingerprint: firefox
+  network: xhttp
+  xhttp-opts:
+    path: /8c1d3cd048db
+    host: 7bc4aex.lt3.h1clayd.click
   udp: true
 - cipher: aes-256-gcm
   name: 意大利 | 优选 | 08
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.90
+  server: 202.50.253.27
+  skip-cert-verify: false
+  tls: false
   type: ss
+  udp: true
 - alpn:
   - h2
   client-fingerprint: chrome
   grpc-opts:
     grpc-mode: gun
     grpc-service-name: mobile.api.Event
-  name: 俄罗斯 | 优选 | 03
+  name: 俄罗斯 | 优选 | 01
   network: grpc
   port: 443
   server: leviko-ru4448.shopingggg.ir
@@ -361,22 +361,88 @@ proxies:
   name: 意大利 | 优选 | 09
   password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
   port: 19999
-  server: 202.50.253.99
+  server: 202.50.253.18
+  skip-cert-verify: false
+  tls: false
   type: ss
+  udp: true
 - client-fingerprint: firefox
-  name: 德国 | 优选 | 05
-  network: ws
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯 | 优选 | 02
+  network: grpc
   port: 443
-  server: ws3.falmero.store
-  servername: paperbirch.merlano.monster
+  server: 201.24.116.192
+  servername: vps3.nemnogogo.com
   tls: true
   type: vless
   udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
+- name: OTHER | 优选 | 01
+  server: 136.148.83.70
+  port: 443
+  type: vless
+  uuid: 00000000-0000-0001-0000-000000000000
+  tls: true
+  servername: aszbk-ru-78dc.my-fade.cloud
+  client-fingerprint: qq
+  network: tcp
+  udp: true
+- name: OTHER | 优选 | 02
+  server: 136.148.83.71
+  port: 443
+  type: vless
+  uuid: 00000000-0000-0001-0000-000000000000
+  tls: true
+  servername: wccfu-ru-79dc.my-fade.cloud
+  client-fingerprint: qq
+  network: tcp
+  udp: true
+- type: vless
+  name: 西班牙 | 优选 | 01
+  server: api.ferrin.uk
+  port: 443
+  uuid: 7d1a74fd-8a38-4a29-863f-5da53a9e557e
+  udp: true
+  tls: true
+  servername: 7d1a74fd.ferrin.uk
+  sni: 7d1a74fd.ferrin.uk
+  skip-cert-verify: false
+  client-fingerprint: chrome
+  network: xhttp
+  xhttp-opts:
+    path: /es
+    mode: stream-one
+- name: 德国 | 优选 | 01
+  server: ws3.falmero.store
+  port: 443
+  type: vless
   uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  tls: true
+  servername: paperbirch.merlano.monster
+  client-fingerprint: firefox
+  network: ws
   ws-opts:
+    path: /api/de1/stream
     headers:
       Host: paperbirch.merlano.monster
-    path: /api/de1/stream
+  udp: true
+- alpn:
+  - h2
+  client-fingerprint: firefox
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: mobile.api.Event
+  name: 俄罗斯 | 优选 | 03
+  network: grpc
+  port: 443
+  server: vps3.nemnogogo.com
+  servername: vps3.nemnogogo.com
+  tls: true
+  type: vless
+  udp: true
+  uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
 - client-fingerprint: firefox
   grpc-opts:
     grpc-mode: gun
@@ -390,71 +456,21 @@ proxies:
   type: vless
   udp: true
   uuid: 38308ff1-5aa9-494f-a25a-0f2870d56b3e
-- alpn:
-  - http/1.1
-  client-fingerprint: firefox
-  network: ws
-  port: 443
-  server: inlay.merlano.monster
-  servername: inlay.merlano.monster
-  tls: true
+- name: 波兰 | 优选 | 01
   type: vless
+  server: 171.22.129.227
+  port: 443
+  uuid: 42c83523-9f96-41b2-82d6-2edb71a4ac19
   udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-  ws-opts:
-    headers:
-      Host: inlay.merlano.monster
-    path: /api/de3/stream
-  name: 德国 | 优选 | 06
-- cipher: aes-256-gcm
-  name: 意大利 | 优选 | 10
-  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
-  port: 19999
-  server: 202.50.253.81
-  type: ss
-- name: 意大利 | 优选 | 11
-  server: 193.160.208.21
-  port: 443
-  type: vless
-  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
-  tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: W7AD8d4R4-7TQW3-m5wJ0aJHzBcjPVdJF22jr2rP03A
-    short-id: 8f88b244f4fa8a69
-  servername: ruitaliamicro2.gangplatform.com
-  client-fingerprint: qq
   network: tcp
-  udp: true
-- alpn:
-  - http/1.1
+  flow: xtls-rprx-vision
+  tls: true
+  reality-opts:
+    public-key: fJnm6-PhJGSwHaAdJOzXkYOfCPPCWSlaZrtfm1XsqhA
+    short-id: ''
+  servername: nujd35aknu.static-mirror.site
   client-fingerprint: firefox
-  name: 德国 | 优选 | 07
-  network: ws
-  port: 443
-  server: lagoon.gerqix.online
-  servername: lagoon.gerqix.online
-  tls: true
-  type: vless
-  uuid: 83706ae4-be2f-4b2b-8079-c3eb4e0b2e3e
-  ws-opts:
-    headers:
-      Host: lagoon.gerqix.online
-    path: /api/de5/stream
-- client-fingerprint: firefox
-  grpc-opts:
-    grpc-mode: gun
-    grpc-service-name: glush.de3.v1
-  name: 德国 | 优选 | 08
-  network: grpc
-  port: 443
-  server: vellum.filnex.baby
-  servername: rookery.moltex.click
-  tls: true
-  type: vless
-  udp: true
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
-- name: 德国 | 优选 | 09
+- name: 德国 | 优选 | 02
   server: 5.129.253.99
   port: 443
   type: vless
@@ -470,23 +486,20 @@ proxies:
     grpc-mode: gun
     grpc-service-name: glush.de3.v1
   udp: true
-- name: 德国 | 优选 | 10
-  server: 193.168.140.175
+- client-fingerprint: firefox
+  grpc-opts:
+    grpc-mode: gun
+    grpc-service-name: glush.de3.v1
+  name: 德国 | 优选 | 03
+  network: grpc
   port: 443
-  type: vless
-  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  server: vellum.filnex.baby
+  servername: rookery.moltex.click
   tls: true
-  alpn:
-  - http/1.1
-  servername: inlay.merlano.monster
-  client-fingerprint: firefox
-  network: ws
-  ws-opts:
-    path: /api/de3/stream
-    headers:
-      Host: inlay.merlano.monster
+  type: vless
   udp: true
-- name: 波兰 | 优选 | 01
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+- name: 波兰 | 优选 | 02
   server: 72.56.249.32
   port: 443
   type: vless
@@ -513,78 +526,6 @@ proxies:
     headers:
       Host: accessfooter.cleanfoodshop.org
   udp: true
-- alpn:
-  - h2
-  client-fingerprint: firefox
-  name: 德国 | 优选 | 11
-  network: xhttp
-  port: 443
-  server: alderbloom.gerqix.online
-  servername: inlet.gerqix.online
-  tls: true
-  type: vless
-  udp: true
-  uuid: 83706ae4-be2f-4b2b-8079-c3eb4e0b2e3e
-  xhttp-opts:
-    host: inlet.gerqix.online
-    mode: packet-up
-    path: /api/de4/preview/
-- name: 加拿大 | 优选 | 01
-  server: 94.241.140.130
-  port: 443
-  type: vless
-  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
-  tls: true
-  flow: xtls-rprx-vision
-  reality-opts:
-    public-key: fVYMiP7jX5yo5loyRrDdajLFBM6FNkZIfBIsezKjdm8
-    short-id: 723ace0d14784964
-  servername: rucanmicro2.gangplatform.com
-  client-fingerprint: safari
-  network: tcp
-  udp: true
-- name: OTHER | 优选 | 02
-  server: 136.148.83.71
-  port: 443
-  type: vless
-  uuid: 00000000-0000-0001-0000-000000000000
-  tls: true
-  servername: wccfu-ru-79dc.my-fade.cloud
-  client-fingerprint: qq
-  network: tcp
-  udp: true
-- name: 立陶宛 | 优选 | 01
-  server: 13.141.36.141
-  port: 443
-  type: vless
-  uuid: cae99415-10a6-4317-81bd-19a4586b5d76
-  tls: true
-  reality-opts:
-    public-key: KEbWnNTqeFDxwCQqyvVvyEhnK7QUIrwhq9-9geUEOmY
-    short-id: 90190d82f1581926
-  servername: 7bc4aex.lt3.h1clayd.click
-  client-fingerprint: firefox
-  network: xhttp
-  xhttp-opts:
-    path: /8c1d3cd048db
-    host: 7bc4aex.lt3.h1clayd.click
-  udp: true
-- name: 德国 | 优选 | 12
-  server: 185.247.224.206
-  port: 443
-  type: vless
-  uuid: 83706ae4-be2f-4b2b-8079-c3eb4e0b2e3e
-  tls: true
-  alpn:
-  - http/1.1
-  servername: lagoon.gerqix.online
-  client-fingerprint: firefox
-  network: ws
-  ws-opts:
-    path: /api/de5/stream
-    headers:
-      Host: lagoon.gerqix.online
-  udp: true
 - name: 瑞典 | 优选 | 02
   server: 81.49.182.202
   port: 443
@@ -598,6 +539,36 @@ proxies:
     path: /media/ws/
     headers:
       Host: accessfooter.cleanfoodshop.org
+  udp: true
+- name: 德国 | 优选 | 04
+  server: alderbloom.gerqix.online
+  port: 443
+  type: vless
+  uuid: 83706ae4-be2f-4b2b-8079-c3eb4e0b2e3e
+  tls: true
+  alpn:
+  - h2
+  servername: inlet.gerqix.online
+  client-fingerprint: firefox
+  network: xhttp
+  xhttp-opts:
+    path: /api/de4/preview/
+    host: inlet.gerqix.online
+    mode: packet-up
+  udp: true
+- name: 意大利 | 优选 | 10
+  server: 193.160.208.21
+  port: 443
+  type: vless
+  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
+  tls: true
+  flow: xtls-rprx-vision
+  reality-opts:
+    public-key: W7AD8d4R4-7TQW3-m5wJ0aJHzBcjPVdJF22jr2rP03A
+    short-id: 8f88b244f4fa8a69
+  servername: ruitaliamicro2.gangplatform.com
+  client-fingerprint: qq
+  network: tcp
   udp: true
 - name: 哈萨克斯坦 | 优选 | 01
   server: 201.34.136.78
@@ -613,7 +584,66 @@ proxies:
   client-fingerprint: firefox
   network: tcp
   udp: true
-- name: 德国 | 优选 | 13
+- name: 德国 | 优选 | 05
+  server: 13.141.36.63
+  port: 443
+  type: vless
+  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  tls: true
+  flow: xtls-rprx-vision
+  reality-opts:
+    public-key: MzgB17ZFbKqs8pbC3EscTzHid_ENc-k_Cp6nXl-2knw
+    short-id: 6976d670818644cc
+  servername: 4935e4t.de25.h1clayd.click
+  client-fingerprint: firefox
+  network: tcp
+  udp: true
+- name: 德国 | 优选 | 06
+  server: 193.168.140.175
+  port: 443
+  type: vless
+  uuid: 0b6a7fe0-206b-4071-9f96-cd397d1ec01a
+  tls: true
+  alpn:
+  - http/1.1
+  servername: inlay.merlano.monster
+  client-fingerprint: firefox
+  network: ws
+  ws-opts:
+    path: /api/de3/stream
+    headers:
+      Host: inlay.merlano.monster
+  udp: true
+- name: 土耳其 | 优选 | 01
+  type: vless
+  server: 90.156.226.200
+  port: 443
+  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
+  udp: true
+  network: tcp
+  flow: xtls-rprx-vision
+  tls: true
+  reality-opts:
+    public-key: aMjyAtCkIs-W68PK2esrcs0eXgtxabf3TXE20o1Ed2c
+    short-id: e7befbb8bdc05025
+  servername: ruturkey1.gangtype.com
+  client-fingerprint: qq
+- type: vless
+  name: 德国 | 优选 | 07
+  server: 196.196.148.177
+  port: 443
+  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  flow: xtls-rprx-vision
+  udp: true
+  tls: true
+  servername: 4935e4t.de25.h1clayd.click
+  sni: 4935e4t.de25.h1clayd.click
+  skip-cert-verify: true
+  client-fingerprint: firefox
+  reality-opts:
+    public-key: MzgB17ZFbKqs8pbC3EscTzHid_ENc-k_Cp6nXl-2knw
+    short-id: 6976d670818644cc
+- name: 德国 | 优选 | 08
   server: 81.49.182.202
   port: 443
   type: vless
@@ -628,6 +658,80 @@ proxies:
     path: /api/de5/stream
     headers:
       Host: lagoon.gerqix.online
+  udp: true
+- name: 德国 | 优选 | 09
+  server: 185.247.224.206
+  port: 443
+  type: vless
+  uuid: 83706ae4-be2f-4b2b-8079-c3eb4e0b2e3e
+  tls: true
+  alpn:
+  - http/1.1
+  servername: lagoon.gerqix.online
+  client-fingerprint: firefox
+  network: ws
+  ws-opts:
+    path: /api/de5/stream
+    headers:
+      Host: lagoon.gerqix.online
+  udp: true
+- name: 加拿大 | 优选 | 01
+  server: 94.241.140.130
+  port: 443
+  type: vless
+  uuid: 9df9ee1a-0671-4c6c-93c7-65598fb946f7
+  tls: true
+  flow: xtls-rprx-vision
+  reality-opts:
+    public-key: fVYMiP7jX5yo5loyRrDdajLFBM6FNkZIfBIsezKjdm8
+    short-id: 723ace0d14784964
+  servername: rucanmicro2.gangplatform.com
+  client-fingerprint: safari
+  network: tcp
+  udp: true
+- type: hysteria
+  name: 美国 | 优选 | 03
+  server: 137.175.82.41
+  port: 20022
+  password: dongtaiwang.com
+  tls: true
+  servername: bing.com
+  sni: bing.com
+  skip-cert-verify: true
+  alpn:
+  - h3
+  up: '11'
+  down: '55'
+  auth-str: dongtaiwang.com
+- name: 德国 | 优选 | 10
+  server: 4935e4t.de25.h1clayd.click
+  port: 443
+  type: vless
+  uuid: 4201786b-d99b-4147-a5f0-20d47acddb81
+  tls: true
+  flow: xtls-rprx-vision
+  reality-opts:
+    public-key: MzgB17ZFbKqs8pbC3EscTzHid_ENc-k_Cp6nXl-2knw
+    short-id: 6976d670818644cc
+  servername: 4935e4t.de25.h1clayd.click
+  client-fingerprint: ios
+  network: tcp
+  udp: true
+- cipher: aes-256-gcm
+  name: 意大利 | 优选 | 11
+  password: ZRpgaBeGxtENIXgvhpkZBKz9GnWRS2dYcx9O+a2iwN4=
+  port: 19999
+  server: 202.50.253.45
+  skip-cert-verify: false
+  tls: false
+  type: ss
+  udp: true
+- name: 德国 | 优选 | 11
+  type: ss
+  server: 47.85.227.36
+  port: 443
+  cipher: 2022-blake3-chacha20-poly1305
+  password: 3NBsnBLanPfG6i3S2GTHineswr6EeSJPb0PCeMQoGoA=
   udp: true
 - name: 美国 | 优选 | 04
   server: 162.35.101.177
