@@ -45,67 +45,45 @@ except AttributeError:
 
 # ======================== 核心配置参数 ========================
 
-UPSTREAM_SOURCES = [
-    # 1. chengaopan/AutoMergePublicNodes (8.4k stars, 多源自动合并，高频更新)
-    [
-        "https://cdn.jsdelivr.net/gh/chengaopan/AutoMergePublicNodes@master/list.yml",
-        "https://raw.githubusercontent.com/chengaopan/AutoMergePublicNodes/master/list.yml",
-    ],
-    # 2. awesome-vpn/awesome-vpn (7.0k stars, 优质 Hysteria2 / Vless 现代协议源)
-    [
-        "https://cdn.jsdelivr.net/gh/awesome-vpn/awesome-vpn@master/clash.yaml",
-        "https://raw.githubusercontent.com/awesome-vpn/awesome-vpn/master/clash.yaml",
-    ],
-    # 3. peasoft/NoMoreWalls (3.6k stars, 社区高分活跃精选)
-    [
-        "https://cdn.jsdelivr.net/gh/peasoft/NoMoreWalls@master/list.meta.yml",
-        "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.meta.yml",
-    ],
-    # 4. snakem982/proxypool (2.3k stars, 每日测活全协议源)
-    [
-        "https://cdn.jsdelivr.net/gh/snakem982/proxypool@main/source/clash-meta-2.yaml",
-        "https://raw.githubusercontent.com/snakem982/proxypool/main/source/clash-meta-2.yaml",
-    ],
-    # 5. zhuhaiuk/free-nodes (700+ stars, 每小时自动更新)
-    [
-        "https://cdn.jsdelivr.net/gh/zhuhaiuk/free-nodes@main/clash_config.yaml",
-        "https://raw.githubusercontent.com/zhuhaiuk/free-nodes/main/clash_config.yaml",
-    ],
-    # 6. Barabama/FreeNodes (670+ stars, 定时精选节点)
-    [
-        "https://cdn.jsdelivr.net/gh/Barabama/FreeNodes@main/nodes/cfmem.yaml",
-        "https://raw.githubusercontent.com/Barabama/FreeNodes@main/nodes/cfmem.yaml",
-    ],
-    # 7. ermao.net (二猫独立博主优质源)
-    [
-        "https://blog.ermao.net/sub/clash/ermao.net",
-        "https://www.ermao.net/sub/clash/ermao.net",
-    ],
-    # 8. TopFreeProxy (综合全网聚合大池底包)
-    [
-        "https://cdn.jsdelivr.net/gh/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy@main/combine/clash.config.yaml",
-        "https://raw.githubusercontent.com/VPN-Subcription-Links/ClashX-V2Ray-TopFreeProxy/main/combine/clash.config.yaml",
-    ],
-    # 9. peasoft/NoMoreWalls (生肉源: 优质 Vless / Hysteria2 / SS / Trojan 原生链接)
-    [
-        "https://cdn.jsdelivr.net/gh/peasoft/NoMoreWalls@master/list.txt",
-        "https://raw.githubusercontent.com/peasoft/NoMoreWalls/master/list.txt",
-    ],
-    # 10. Pawdroid/Free-servers (生肉源: Vless Reality / SS 高频测活生肉)
-    [
-        "https://cdn.jsdelivr.net/gh/Pawdroid/Free-servers@main/sub",
-        "https://raw.githubusercontent.com/Pawdroid/Free-servers/main/sub",
-    ],
-    # 11. ripaojiedian/freenode (生肉源: 日更活跃 Vless / SS / Reality 生肉)
-    [
-        "https://cdn.jsdelivr.net/gh/ripaojiedian/freenode@main/sub",
-        "https://raw.githubusercontent.com/ripaojiedian/freenode/main/sub",
-    ],
-    # 12. freefq/free (生肉源: 经典海量 v2 生肉订阅)
-    [
-        "https://cdn.jsdelivr.net/gh/freefq/free@master/v2",
-        "https://raw.githubusercontent.com/freefq/free/master/v2",
-    ],
+def _gh_mirrors(owner: str, repo: str, branch: str, path: str) -> List[str]:
+    """生成 GitHub 订阅源的多镜像故障转移列表 (jsDelivr CDN -> ghfast 国内加速 -> raw 直连)。"""
+    raw_url = f"https://raw.githubusercontent.com/{owner}/{repo}/{branch}/{path}"
+    return [
+        f"https://cdn.jsdelivr.net/gh/{owner}/{repo}@{branch}/{path}",
+        f"https://ghfast.top/{raw_url}",
+        raw_url,
+    ]
+
+
+# 经高通 410 真机实测筛选的精选高产数据源 (按国内存活率与延迟表现降序排列)
+UPSTREAM_SOURCES: List[Tuple[str, List[str]]] = [
+    # --- Tier 1: 国内直测 / subs-check 高命中核心源 (存活率 24% ~ 95%) ---
+    ("kooker/FreeSubsCheck", _gh_mirrors("kooker", "FreeSubsCheck", "main", "all.yaml")),
+    ("zhuhaiuk/free-nodes", _gh_mirrors("zhuhaiuk", "free-nodes", "main", "clash_config.yaml")),
+    ("won777/xrayvip", _gh_mirrors("won777", "clash-sub", "main", "xrayvip.yaml")),
+    ("Pawdroid/Free-servers", _gh_mirrors("Pawdroid", "Free-servers", "main", "sub")),
+    ("sunmiao4458/airport", _gh_mirrors("sunmiao4458", "free-proxy-airport", "main", "output/clash.yaml")),
+    ("snakem982/proxypool", _gh_mirrors("snakem982", "proxypool", "main", "source/clash-meta-2.yaml")),
+    ("Barabama/cfmem", _gh_mirrors("Barabama", "FreeNodes", "main", "nodes/cfmem.yaml")),
+    ("Barabama/datiya", _gh_mirrors("Barabama", "FreeNodes", "main", "nodes/datiya.yaml")),
+
+    # --- Tier 2: 高频活跃预检源 (存活率 8% ~ 19%，大幅扩充不重复活节点) ---
+    (
+        "ermaozi/reachable",
+        _gh_mirrors("ermaozi", "get_subscribe", "main", "subscribe/reachable/clash.yml")
+        + ["https://blog.ermao.net/sub/clash/ermao.net"],
+    ),
+    ("chengaopan/AutoMerge", _gh_mirrors("chengaopan", "AutoMergePublicNodes", "master", "list.yml")),
+    ("ripaojiedian/freenode", _gh_mirrors("ripaojiedian", "freenode", "main", "sub")),
+    ("lyqnihao/clash-meta", _gh_mirrors("lyqnihao", "proxy", "main", "clash-meta/output.yaml")),
+    ("free18/v2ray", _gh_mirrors("free18", "v2ray", "main", "c.yaml")),
+    ("won777/unified", _gh_mirrors("won777", "clash-sub", "main", "unified.yaml")),
+
+    # --- Tier 3: 现代协议专项池 (VLESS Reality / Hysteria2 / xhttp 增量) ---
+    ("peasoft/NoMoreWalls", _gh_mirrors("peasoft", "NoMoreWalls", "master", "list.meta.yml")),
+    ("hamzawih0/zorVPN", _gh_mirrors("hamzawih0", "zorVPN", "main", "clash.yaml")),
+    ("sakazxc/free-vpn-sub", _gh_mirrors("sakazxc1400-creator", "free-vpn-sub", "data", "output/clash.yaml")),
+    ("Mosifree/Reality", _gh_mirrors("Mosifree", "-FREE2CONFIG", "main", "Reality")),
 ]
 
 BIN_MIHOMO = "/usr/local/bin/mihomo"
@@ -457,7 +435,7 @@ def update_and_save_historical_pool(
 # 有效成熟的代理协议类型白名单 (严格排除 compatible 占位符、http/socks5 明文、非代理规则)
 VALID_PROXY_TYPES = {
     "ss", "ssr", "vmess", "vless", "trojan",
-    "hysteria", "hysteria2", "tuic", "wireguard", "snell"
+    "hysteria", "hysteria2", "tuic", "wireguard", "snell", "anytls"
 }
 
 # 垃圾/广告/兼容性占位关键字 (出现在名称中直接丢弃)
@@ -574,6 +552,14 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
                         "short-id": sid,
                     }
         net = qs.get("type", ["tcp"])[0].lower()
+        alpn_raw = qs.get("alpn", [""])[0]
+        if alpn_raw:
+            p["alpn"] = [a.strip() for a in alpn_raw.split(",") if a.strip()]
+        if qs.get("allowInsecure", ["0"])[0] in ("1", "true"):
+            p["skip-cert-verify"] = True
+        enc = qs.get("encryption", [""])[0].strip()
+        if enc and enc.lower() != "none":
+            p["encryption"] = enc
         if net == "ws":
             p["network"] = "ws"
             path = qs.get("path", ["/"])[0]
@@ -583,6 +569,14 @@ def parse_vless(link: str) -> Optional[Dict[str, Any]]:
             p["network"] = "grpc"
             service_name = qs.get("serviceName", [""])[0]
             p["grpc-opts"] = {"grpc-service-name": service_name}
+        elif net in ("xhttp", "splithttp"):
+            p["network"] = "xhttp"
+            path = qs.get("path", ["/"])[0]
+            x_host = qs.get("host", [""])[0] or sni or host
+            p["xhttp-opts"] = {"path": path, "host": x_host, "mode": qs.get("mode", ["auto"])[0]}
+        elif net == "h2":
+            p["network"] = "h2"
+            p["h2-opts"] = {"path": qs.get("path", ["/"])[0], "host": [qs.get("host", [""])[0] or sni or host]}
         return p
     except Exception:
         return None
@@ -687,6 +681,75 @@ def parse_hysteria2(link: str) -> Optional[Dict[str, Any]]:
         return None
 
 
+def parse_anytls(link: str) -> Optional[Dict[str, Any]]:
+    """解析 anytls://<password>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        password = urllib.parse.unquote(u.username or u.password or "")
+        host = u.hostname
+        port = u.port
+        if not password or not host or not port:
+            return None
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"anytls_{host}"
+        qs = urllib.parse.parse_qs(u.query)
+        p: Dict[str, Any] = {
+            "name": name,
+            "type": "anytls",
+            "server": host,
+            "port": port,
+            "password": password,
+            "udp": True,
+        }
+        sni = qs.get("sni", [""])[0]
+        if sni:
+            p["sni"] = sni
+        if qs.get("insecure", ["0"])[0] in ("1", "true"):
+            p["skip-cert-verify"] = True
+        alpn_raw = qs.get("alpn", [""])[0]
+        if alpn_raw:
+            p["alpn"] = [a.strip() for a in alpn_raw.split(",") if a.strip()]
+        return p
+    except Exception:
+        return None
+
+
+def parse_tuic(link: str) -> Optional[Dict[str, Any]]:
+    """解析 tuic://<uuid>:<password>@<host>:<port>?<params>#<name> 为 Clash 字典。"""
+    try:
+        u = urllib.parse.urlparse(link)
+        uuid = urllib.parse.unquote(u.username or "")
+        password = urllib.parse.unquote(u.password or "")
+        host = u.hostname
+        port = u.port
+        if not uuid or not host or not port:
+            return None
+        name = urllib.parse.unquote(u.fragment) if u.fragment else f"tuic_{host}"
+        qs = urllib.parse.parse_qs(u.query)
+        p: Dict[str, Any] = {
+            "name": name,
+            "type": "tuic",
+            "server": host,
+            "port": port,
+            "uuid": uuid,
+            "password": password,
+            "udp": True,
+        }
+        sni = qs.get("sni", [""])[0]
+        if sni:
+            p["sni"] = sni
+        cc = qs.get("congestion_control", [""])[0]
+        if cc:
+            p["congestion-controller"] = cc
+        alpn_raw = qs.get("alpn", [""])[0]
+        if alpn_raw:
+            p["alpn"] = [a.strip() for a in alpn_raw.split(",") if a.strip()]
+        if qs.get("allow_insecure", ["0"])[0] in ("1", "true") or qs.get("insecure", ["0"])[0] in ("1", "true"):
+            p["skip-cert-verify"] = True
+        return p
+    except Exception:
+        return None
+
+
 def parse_raw_line(line: str) -> Optional[Dict[str, Any]]:
     """单行原生代理链接路由与解析。"""
     line = line.strip()
@@ -702,6 +765,10 @@ def parse_raw_line(line: str) -> Optional[Dict[str, Any]]:
         return parse_ss(line)
     elif line.startswith("hysteria2://") or line.startswith("hy2://"):
         return parse_hysteria2(line)
+    elif line.startswith("anytls://"):
+        return parse_anytls(line)
+    elif line.startswith("tuic://"):
+        return parse_tuic(line)
     return None
 
 
@@ -709,15 +776,12 @@ def parse_base64_payload(text: str) -> List[Dict[str, Any]]:
     """
     通用 Base64 生肉订阅解码引擎：
     - 若整个文本为单段 Base64 编码，自动解码为明文；
-    - 逐行提取 vmess/vless/ss/trojan/hysteria2 链接；
+    - 逐行提取 vmess/vless/ss/trojan/hysteria2/anytls/tuic 链接；
     - 返回标准 Clash proxy 字典列表。
     """
     decoded = safe_b64decode(text)
-    content = (
-        decoded
-        if decoded and any(proto in decoded for proto in ("vmess://", "vless://", "ss://", "trojan://", "hysteria2://", "hy2://"))
-        else text
-    )
+    proto_hints = ("vmess://", "vless://", "ss://", "trojan://", "hysteria2://", "hy2://", "anytls://", "tuic://")
+    content = decoded if decoded and any(proto in decoded for proto in proto_hints) else text
     proxies: List[Dict[str, Any]] = []
     for line in content.splitlines():
         line = line.strip()
@@ -731,18 +795,26 @@ def parse_base64_payload(text: str) -> List[Dict[str, Any]]:
 
 # ======================== 阶段 1: 多源上游拉取与去重 ========================
 
-def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, Any]], Dict[str, Any]]:
-    """多源全量拉取上游订阅节点（仅提取 proxies，严格忽略自带 rules/groups），去重并过滤无效节点。"""
-    session = requests.Session()
-    session.trust_env = False
+# 记录每个节点指纹首次归属的上游来源（仅内存中用于产率统计，绝不写入配置文件）
+_SOURCE_BY_FP: Dict[str, str] = {}
+
+VALID_SS_CIPHERS = {
+    "aes-128-gcm", "aes-192-gcm", "aes-256-gcm",
+    "chacha20-ietf-poly1305", "xchacha20-ietf-poly1305",
+    "2022-blake3-aes-128-gcm", "2022-blake3-aes-256-gcm", "2022-blake3-chacha20-poly1305",
+    "aes-128-cfb", "aes-192-cfb", "aes-256-cfb",
+    "aes-128-ctr", "aes-192-ctr", "aes-256-ctr",
+    "rc4-md5", "chacha20-ietf", "none",
+}
+
+
+def _fetch_single_source_group(idx_and_item: Tuple[int, Tuple[str, List[str]]]) -> Tuple[int, str, List[Dict[str, Any]]]:
+    """拉取单个上游源（带镜像故障转移）。"""
+    order_idx, (source_name, urls) = idx_and_item
     headers = {"User-Agent": "ClashMeta/1.19.34"}
-
-    all_raw_proxies: List[Dict[str, Any]] = []
-
-    for group in UPSTREAM_SOURCES:
-        loaded = False
-        for url in group:
-            log.info("尝试拉取上游节点: %s", url.split("?")[0])
+    with requests.Session() as session:
+        session.trust_env = False
+        for url in urls:
             try:
                 resp = session.get(url, headers=headers, timeout=12)
                 resp.raise_for_status()
@@ -763,40 +835,64 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
                     try:
                         proxies_list = parse_base64_payload(text)
                     except Exception as e:
-                        log.warning("Base64/Raw 解码异常: %s", e)
+                        log.warning("[%s] Base64/Raw 解码异常: %s", source_name, e)
 
                 if proxies_list:
-                    all_raw_proxies.extend(proxies_list)
-                    log.info("拉取成功: 来自 %s (获取到 %d 个原始节点)", url.split("?")[0], len(proxies_list))
-                    loaded = True
-                    break
-                log.warning("上游响应未包含有效节点数据 (YAML/Base64): %s", url)
+                    log.info("拉取成功 [%s]: %s (获取到 %d 个原始节点)", source_name, url.split("?")[0], len(proxies_list))
+                    return (order_idx, source_name, proxies_list)
+                log.warning("[%s] 响应未包含有效节点数据: %s", source_name, url)
             except Exception as exc:
-                log.warning("拉取失败 (%s): %s", url, exc)
-        if not loaded:
-            log.warning("该订阅源的所有镜像均不可达: %s", group[0])
+                log.warning("[%s] 镜像拉取失败 (%s): %s", source_name, url.split("?")[0], exc)
+    log.warning("订阅源 [%s] 所有镜像均不可达", source_name)
+    return (order_idx, source_name, [])
 
-    session.close()
+
+def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, Any]], Dict[str, Any]]:
+    """多源并发拉取上游订阅节点（按优先级顺序去重合并，保留高优源质量参数），并回流历史保活池。"""
+    _SOURCE_BY_FP.clear()
+    fetched_groups: List[Tuple[int, str, List[Dict[str, Any]]]] = []
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        futures = [pool.submit(_fetch_single_source_group, (i, item)) for i, item in enumerate(UPSTREAM_SOURCES)]
+        for f in as_completed(futures):
+            fetched_groups.append(f.result())
+
+    # 严格按 UPSTREAM_SOURCES 定义的高存活率顺序排列合并
+    fetched_groups.sort(key=lambda x: x[0])
+
+    tagged_raw_proxies: List[Tuple[str, Dict[str, Any]]] = []
+    for _, source_name, plist in fetched_groups:
+        for p in plist:
+            tagged_raw_proxies.append((source_name, p))
 
     # 核心保障：自动回流历史存活节点池（带 3 振出局容错元数据）
     old_historical_proxies, old_meta = load_historical_pool()
     if old_historical_proxies:
-        all_raw_proxies.extend(old_historical_proxies)
+        for p in old_historical_proxies:
+            tagged_raw_proxies.append(("历史保活池", p))
         log.info("成功回流历史保活节点池: %d 个 (进入保活复测队列)", len(old_historical_proxies))
 
-    if not all_raw_proxies:
+    if not tagged_raw_proxies:
         raise RuntimeError("所有上游镜像源均拉取失败，终止任务。")
 
-    raw_count = len(all_raw_proxies)
+    raw_count = len(tagged_raw_proxies)
     seen_keys = set()
     dedup_proxies: List[Dict[str, Any]] = []
+    per_source_uniq: Counter = Counter()
 
-    for idx, proxy in enumerate(all_raw_proxies):
+    for idx, (source_name, raw_proxy) in enumerate(tagged_raw_proxies):
+        if not isinstance(raw_proxy, dict):
+            continue
+        proxy = dict(raw_proxy)
+
         # 1. 保留所有包含服务器的节点，绝不根据名字过滤，若名称缺失自动补齐
-        raw_name = str(proxy.get("name") or f"node_{idx}").strip()
+        _ = str(proxy.get("name") or f"node_{idx}").strip()
 
-        # 2. 协议白名单过滤 (剔除 compatible、http、socks5 等无效类型)
+        # 2. 协议归一化与白名单过滤 (剔除 compatible、http、socks5 等无效类型)
         p_type = str(proxy.get("type", "")).strip().lower()
+        if p_type == "hy2":
+            p_type = "hysteria2"
+            proxy["type"] = "hysteria2"
         if not p_type or p_type not in VALID_PROXY_TYPES:
             continue
 
@@ -810,16 +906,28 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
             port_num = int(port)
             if not (1 <= port_num <= 65535):
                 continue
+            proxy["port"] = port_num
         except ValueError:
             continue
 
-        # 4. 凭证完整性校验 (缺少 UUID/密码的残缺节点直接丢弃)
+        # 4. 凭证完整性与内核兼容性清洗
         if p_type in ("vmess", "vless") and not proxy.get("uuid"):
             continue
-        if p_type in ("ss", "trojan", "hysteria", "hysteria2") and not (proxy.get("password") or proxy.get("auth")):
+        if p_type == "vless" and str(proxy.get("cipher", "")).lower() == "none":
+            proxy.pop("cipher", None)
+        if p_type in ("ss", "trojan", "hysteria", "hysteria2", "anytls") and not (proxy.get("password") or proxy.get("auth")):
             continue
+        if p_type == "tuic" and not (proxy.get("uuid") or proxy.get("token")):
+            continue
+        if p_type == "ss":
+            cipher = str(proxy.get("cipher", "")).strip().lower()
+            if cipher == "chacha20-poly1305":
+                cipher = "chacha20-ietf-poly1305"
+                proxy["cipher"] = cipher
+            if not cipher or cipher not in VALID_SS_CIPHERS:
+                continue
 
-        # 5. Reality 校验与清洗 (短 ID 必须为偶数位合法 Hex，否则置空；缺公钥直接过滤)
+        # 5. Reality 校验与清洗 (短 ID 必须为 16 位合法 Hex，否则置空；缺公钥直接过滤)
         if "reality-opts" in proxy and isinstance(proxy["reality-opts"], dict):
             ro = dict(proxy["reality-opts"])
             if not ro.get("public-key"):
@@ -833,16 +941,18 @@ def fetch_and_dedup() -> Tuple[List[Dict[str, Any]], int, int, List[Dict[str, An
         if unique_key in seen_keys:
             continue
         seen_keys.add(unique_key)
+        _SOURCE_BY_FP[unique_key] = source_name
+        per_source_uniq[source_name] += 1
 
-        clean_proxy = dict(proxy)
-        clean_proxy["name"] = f"p_{idx:05d}"
-        dedup_proxies.append(clean_proxy)
+        proxy["name"] = f"p_{idx:05d}"
+        dedup_proxies.append(proxy)
 
-    del all_raw_proxies, seen_keys
+    del tagged_raw_proxies, seen_keys
     gc.collect()
 
     dedup_count = len(dedup_proxies)
-    log.info("多源汇聚完成: 原始节点 %d 个 -> 全量待测 %d 个 (已严格过滤非节点规则与无效服务器)", raw_count, dedup_count)
+    top_contrib = ", ".join(f"{k}:{v}" for k, v in per_source_uniq.most_common(8))
+    log.info("多源汇聚完成: 原始节点 %d 个 -> 全量待测 %d 个 (主要净增量: %s)", raw_count, dedup_count, top_contrib)
     return dedup_proxies, raw_count, dedup_count, old_historical_proxies, old_meta
 
 
@@ -1009,6 +1119,11 @@ def run_stage1_fast_delay_filter(proxies: List[Dict[str, Any]]) -> List[Tuple[Di
         log.info("双轮精测完成: 最终稳定入围 %d 个 (已成功熔断剔除 %d 个偶发丢包/假活节点)",
                  len(refined_records), flaky_count)
         alive_records = refined_records
+
+    if alive_records and _SOURCE_BY_FP:
+        src_hits = Counter(_SOURCE_BY_FP.get(get_proxy_fingerprint(p), "unknown") for p, _ in alive_records)
+        hit_summary = ", ".join(f"{k}:{v}" for k, v in src_hits.most_common())
+        log.info("各来源存活贡献统计 (%d 个): %s", len(alive_records), hit_summary)
 
     # 关闭初筛 Mihomo 并释放资源
     kill_active_procs()
